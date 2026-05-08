@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dora — Pannello Silvia</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #f5f6f8;
+    color: #1d2733;
+    min-height: 100vh;
+  }
+  .topbar {
+    background: white;
+    padding: 14px 20px;
+    border-bottom: 1px solid #e3e6eb;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  .topbar h1 { font-size: 18px; font-weight: 600; }
+  .topbar .name { font-size: 13px; color: #5d6c7c; }
+  .topbar button {
+    background: transparent;
+    border: 1px solid #d4d8de;
+    color: #5d6c7c;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+
+  /* Login */
+  .login-screen {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #00a884 0%, #018f72 100%);
+  }
+  .login-card {
+    background: white;
+    padding: 32px;
+    border-radius: 12px;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.12);
+    width: 320px;
+    text-align: center;
+  }
+  .login-card h2 { font-size: 24px; margin-bottom: 8px; }
+  .login-card p { color: #5d6c7c; font-size: 14px; margin-bottom: 24px; }
+  .login-card input {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #d4d8de;
+    border-radius: 8px;
+    font-size: 18px;
+    text-align: center;
+    letter-spacing: 4px;
+    margin-bottom: 12px;
+  }
+  .login-card button {
+    width: 100%;
+    padding: 12px;
+    background: #00a884;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .login-error { color: #c0392b; font-size: 13px; margin-top: 8px; min-height: 18px; }
+
+  /* Tabs */
+  .tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid #e3e6eb;
+    margin-bottom: 20px;
+  }
+  .tab {
+    padding: 12px 16px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    color: #5d6c7c;
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .tab.active { color: #00a884; border-bottom-color: #00a884; }
+
+  /* Cards */
+  .card {
+    background: white;
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+  .card h3 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; color: #5d6c7c; margin-bottom: 14px; }
+
+  /* Agenda */
+  .week-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .week-header h2 { font-size: 18px; }
+  .week-nav button {
+    background: transparent;
+    border: 1px solid #d4d8de;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    margin: 0 4px;
+    font-size: 13px;
+  }
+  .day-block {
+    border-bottom: 1px solid #f0f2f5;
+    padding: 12px 0;
+  }
+  .day-block:last-child { border-bottom: none; }
+  .day-name {
+    font-weight: 600;
+    font-size: 14px;
+    margin-bottom: 8px;
+    text-transform: capitalize;
+  }
+  .day-name.today { color: #00a884; }
+  .booking-row {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    margin-bottom: 6px;
+    gap: 12px;
+  }
+  .booking-row .time {
+    font-weight: 600;
+    color: #00a884;
+    min-width: 50px;
+  }
+  .booking-row .client { flex: 1; font-size: 14px; }
+  .booking-row .service { color: #5d6c7c; font-size: 12px; }
+  .booking-row.cancelled { opacity: 0.5; text-decoration: line-through; }
+  .booking-row .actions { display: flex; gap: 4px; }
+  .booking-row .actions button {
+    background: transparent;
+    border: 1px solid #d4d8de;
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+  }
+  .booking-row .actions button.danger { color: #c0392b; border-color: #f0c4c0; }
+  .empty-day { color: #b0b8c2; font-size: 13px; font-style: italic; padding: 4px 0; }
+
+  /* Clients */
+  .client-row {
+    display: flex;
+    align-items: center;
+    padding: 12px;
+    border-bottom: 1px solid #f0f2f5;
+    gap: 12px;
+  }
+  .client-row:last-child { border-bottom: none; }
+  .client-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: #e3e6eb;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    color: #5d6c7c;
+    font-size: 14px;
+  }
+  .client-info { flex: 1; }
+  .client-info .name { font-weight: 500; font-size: 14px; }
+  .client-info .meta { color: #5d6c7c; font-size: 12px; margin-top: 2px; }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    background: #e7f7f0;
+    color: #00a884;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+
+  /* Instruct */
+  .instruct-box {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .instruct-box input {
+    flex: 1;
+    padding: 12px 14px;
+    border: 1px solid #d4d8de;
+    border-radius: 8px;
+    font-size: 14px;
+  }
+  .instruct-box button {
+    padding: 12px 20px;
+    background: #00a884;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 500;
+  }
+  .instruct-box button:disabled { opacity: 0.6; cursor: not-allowed; }
+  .instruct-history { font-size: 13px; }
+  .instruct-entry {
+    padding: 10px 12px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    margin-bottom: 6px;
+    border-left: 3px solid #00a884;
+  }
+  .instruct-entry.failed { border-left-color: #c0392b; }
+  .instruct-entry .q { color: #5d6c7c; font-style: italic; margin-bottom: 4px; }
+  .instruct-entry .a { font-weight: 500; }
+  .instruct-suggestions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  .instruct-suggestions span {
+    padding: 4px 10px;
+    background: #eef2f5;
+    border-radius: 12px;
+    font-size: 12px;
+    color: #5d6c7c;
+    cursor: pointer;
+  }
+  .instruct-suggestions span:hover { background: #00a884; color: white; }
+
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+
+<!-- Login -->
+<div id="login" class="login-screen">
+  <div class="login-card">
+    <h2>Dora</h2>
+    <p>Inserisci il PIN per accedere</p>
+    <form onsubmit="login(event)">
+      <input id="pin" type="password" inputmode="numeric" maxlength="6" placeholder="••••" autofocus>
+      <button type="submit">Accedi</button>
+    </form>
+    <div class="login-error" id="login-error"></div>
+  </div>
+</div>
+
+<!-- App -->
+<div id="app" class="hidden">
+  <div class="topbar">
+    <div>
+      <h1>Dora</h1>
+      <div class="name" id="pract-name"></div>
+    </div>
+    <button onclick="logout()">Esci</button>
+  </div>
+
+  <div class="container">
+    <div class="tabs">
+      <div class="tab active" onclick="showTab('agenda')">Agenda</div>
+      <div class="tab" onclick="showTab('clients')">Clienti</div>
+      <div class="tab" onclick="showTab('instruct')">Comandi</div>
+    </div>
+
+    <div id="tab-agenda">
+      <div class="card">
+        <div class="week-header">
+          <h2 id="week-label">Settimana</h2>
+          <div class="week-nav">
+            <button onclick="changeWeek(-1)">← Precedente</button>
+            <button onclick="changeWeek(0)">Oggi</button>
+            <button onclick="changeWeek(1)">Successiva →</button>
+          </div>
+        </div>
+        <div id="agenda-content"></div>
+      </div>
+    </div>
+
+    <div id="tab-clients" class="hidden">
+      <div class="card">
+        <h3>Lista Clienti</h3>
+        <div id="clients-content"></div>
+      </div>
+    </div>
+
+    <div id="tab-instruct" class="hidden">
+      <div class="card">
+        <h3>Dai un'istruzione a Dora</h3>
+        <div class="instruct-suggestions">
+          <span onclick="useSuggestion(this)">Cancella tutto domani</span>
+          <span onclick="useSuggestion(this)">Mostra le prenotazioni di oggi</span>
+          <span onclick="useSuggestion(this)">Cancella le lezioni di lunedì</span>
+        </div>
+        <form class="instruct-box" onsubmit="instruct(event)">
+          <input id="instruction" type="text" placeholder="es. 'Cancella tutto domani, sto male'" autocomplete="off">
+          <button type="submit" id="instruct-btn">Esegui</button>
+        </form>
+        <div class="instruct-history" id="instruct-history"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentWeekOffset = 0;
+const $ = (id) => document.getElementById(id);
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { credentials: 'include', ...opts });
+  if (r.status === 401) {
+    showLogin();
+    throw new Error('Auth required');
+  }
+  if (!r.ok) throw new Error((await r.json()).detail || 'Error');
+  return r.json();
+}
+
+function showLogin() {
+  $('login').classList.remove('hidden');
+  $('app').classList.add('hidden');
+}
+
+function showApp() {
+  $('login').classList.add('hidden');
+  $('app').classList.remove('hidden');
+  loadAgenda();
+}
+
+async function login(e) {
+  e.preventDefault();
+  const pin = $('pin').value;
+  $('login-error').textContent = '';
+  try {
+    const r = await fetch('/practitioner/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ pin }),
+    });
+    if (!r.ok) {
+      const err = await r.json();
+      $('login-error').textContent = err.detail || 'Errore';
+      return;
+    }
+    const data = await r.json();
+    $('pract-name').textContent = data.name;
+    showApp();
+  } catch (err) {
+    $('login-error').textContent = 'Errore di rete';
+  }
+}
+
+async function logout() {
+  await fetch('/practitioner/api/logout', { method: 'POST', credentials: 'include' });
+  $('pin').value = '';
+  showLogin();
+}
+
+function showTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  event.target.classList.add('active');
+  ['agenda', 'clients', 'instruct'].forEach(t => {
+    $(`tab-${t}`).classList.toggle('hidden', t !== name);
+  });
+  if (name === 'clients') loadClients();
+}
+
+function fmtDayName(d, today) {
+  const days = ['lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato', 'domenica'];
+  const months = ['gen', 'feb', 'mar', 'apr', 'mag', 'giu', 'lug', 'ago', 'set', 'ott', 'nov', 'dic'];
+  const isToday = d.toDateString() === today.toDateString();
+  return { label: `${days[(d.getDay() + 6) % 7]} ${d.getDate()} ${months[d.getMonth()]}`, isToday };
+}
+
+function fmtTime(iso) {
+  const d = new Date(iso);
+  return d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+}
+
+async function loadAgenda() {
+  const today = new Date();
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+  monday.setDate(monday.getDate() + currentWeekOffset * 7);
+  const weekStart = monday.toISOString().slice(0, 10);
+
+  $('week-label').textContent = `Settimana del ${monday.toLocaleDateString('it-IT', { day: 'numeric', month: 'long' })}`;
+
+  const data = await api(`/practitioner/api/agenda?week_start=${weekStart}`);
+  const byDay = {};
+  data.bookings.forEach(b => {
+    const day = b.starts_at.slice(0, 10);
+    (byDay[day] = byDay[day] || []).push(b);
+  });
+
+  const html = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    const key = d.toISOString().slice(0, 10);
+    const { label, isToday } = fmtDayName(d, today);
+    const bookings = byDay[key] || [];
+    html.push(`<div class="day-block">
+      <div class="day-name ${isToday ? 'today' : ''}">${label}</div>
+      ${bookings.length === 0
+        ? '<div class="empty-day">Nessuna prenotazione</div>'
+        : bookings.map(b => `
+          <div class="booking-row ${b.status === 'cancelled' ? 'cancelled' : ''}">
+            <div class="time">${fmtTime(b.starts_at)}</div>
+            <div class="client">
+              <div>${b.client_name}</div>
+              <div class="service">${b.service} · ${b.duration_minutes}min · ${b.created_via}</div>
+            </div>
+            <div class="actions">
+              ${b.status === 'confirmed' ? `<button class="danger" onclick="cancelBooking('${b.id}')">Cancella</button>` : ''}
+            </div>
+          </div>`).join('')}
+    </div>`);
+  }
+  $('agenda-content').innerHTML = html.join('');
+}
+
+async function cancelBooking(id) {
+  if (!confirm('Cancellare questa lezione?')) return;
+  await api(`/practitioner/api/bookings/${id}`, { method: 'DELETE' });
+  loadAgenda();
+}
+
+function changeWeek(delta) {
+  if (delta === 0) currentWeekOffset = 0;
+  else currentWeekOffset += delta;
+  loadAgenda();
+}
+
+async function loadClients() {
+  const data = await api('/practitioner/api/clients');
+  if (data.clients.length === 0) {
+    $('clients-content').innerHTML = '<div class="empty-day">Nessun cliente ancora.</div>';
+    return;
+  }
+  $('clients-content').innerHTML = data.clients.map(c => {
+    const initials = (c.first_name?.[0] || '?') + (c.last_name?.[0] || '');
+    return `<div class="client-row">
+      <div class="client-avatar">${initials}</div>
+      <div class="client-info">
+        <div class="name">${c.name || c.phone}</div>
+        <div class="meta">${c.phone}</div>
+      </div>
+      ${c.upcoming_bookings > 0 ? `<span class="badge">${c.upcoming_bookings} prenotazioni</span>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function useSuggestion(el) {
+  $('instruction').value = el.textContent;
+  $('instruction').focus();
+}
+
+async function instruct(e) {
+  e.preventDefault();
+  const text = $('instruction').value.trim();
+  if (!text) return;
+  $('instruct-btn').disabled = true;
+  $('instruction').value = '';
+
+  try {
+    const result = await api('/practitioner/api/instruct', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instruction: text }),
+    });
+    const cls = result.executed ? '' : 'failed';
+    let extra = '';
+    if (result.items) {
+      extra = '<ul style="margin-top:6px;padding-left:18px;font-size:12px;">' +
+        result.items.map(i => `<li>${i.time} — ${i.client}</li>`).join('') + '</ul>';
+    }
+    const entry = document.createElement('div');
+    entry.className = `instruct-entry ${cls}`;
+    entry.innerHTML = `<div class="q">"${text}"</div><div class="a">${result.summary}</div>${extra}`;
+    $('instruct-history').prepend(entry);
+    loadAgenda();
+  } catch (err) {
+    alert('Errore: ' + err.message);
+  } finally {
+    $('instruct-btn').disabled = false;
+  }
+}
+
+// Try auto-login via existing cookie
+api('/practitioner/api/me')
+  .then(data => {
+    $('pract-name').textContent = data.name;
+    showApp();
+  })
+  .catch(() => showLogin());
+</script>
+</body>
+</html>

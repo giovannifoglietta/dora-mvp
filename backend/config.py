@@ -11,6 +11,7 @@ class Settings(BaseModel):
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
     whatsapp_api_key: str = os.getenv("WHATSAPP_API_KEY", "")
     whatsapp_webhook_token: str = os.getenv("WHATSAPP_WEBHOOK_TOKEN", "dora-verify-token")
+    practitioner_pin: str = os.getenv("PRACTITIONER_PIN", "1234")
 
 
 settings = Settings()

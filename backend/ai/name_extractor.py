@@ -1,37 +1,48 @@
+import json
 import re
-from typing import Optional
+from typing import Optional, Tuple
 import anthropic
 from backend.config import settings
 
 client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
-_NAME_PROMPT = """Estrai il nome di battesimo (e cognome se presente) della persona che scrive.
+_NAME_PROMPT = """Estrai il nome e cognome della persona che scrive (cioè il mittente del messaggio).
 
 Regole:
-- Se il messaggio contiene un nome chiaramente attribuibile al mittente (es. "sono Marco", "mi chiamo Anna Rossi", o solo "Marco" come risposta), restituiscilo.
-- Ignora nomi di altre persone (es. "vorrei prenotare per Maria" → NONE).
-- Ignora saluti generici e parole comuni (es. "ciao" non è un nome).
-- Se non c'è un nome chiaro, rispondi esattamente: NONE
+- Cerca un'auto-presentazione: "sono Marco Rossi", "mi chiamo Anna", "Marco" come risposta secca, "Marco Rossi" come risposta secca.
+- IGNORA nomi di altre persone ("vorrei prenotare per Maria" → niente nome).
+- IGNORA saluti e parole comuni ("ciao", "buongiorno" non sono nomi).
+- Se c'è solo il nome senza cognome, lascia il cognome vuoto.
 
-Rispondi SOLO con il nome (max 2 parole, es. "Marco" o "Anna Rossi") oppure "NONE"."""
-
-
-def _clean(name: str) -> str:
-    name = re.sub(r"[^\w\sÀ-ÿ'-]", "", name).strip()
-    parts = [p for p in name.split() if p][:2]
-    return " ".join(parts).title()
+Rispondi SOLO con un JSON, senza spiegazioni e senza markdown:
+{"first_name": "Marco", "last_name": "Rossi"}
+oppure se non c'è nome:
+{"first_name": null, "last_name": null}"""
 
 
-async def extract_name(message: str) -> Optional[str]:
-    """Use Claude to extract a self-attributed name from the message. Returns None if absent."""
+def _clean(s: Optional[str]) -> Optional[str]:
+    if not s or not isinstance(s, str):
+        return None
+    s = re.sub(r"[^\w\sÀ-ÿ'-]", "", s).strip()
+    if len(s) < 2:
+        return None
+    parts = [p for p in s.split() if p][:2]
+    return " ".join(parts).title() if parts else None
+
+
+async def extract_name(message: str) -> Tuple[Optional[str], Optional[str]]:
+    """Returns (first_name, last_name). Either or both can be None."""
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=20,
+        max_tokens=80,
         system=_NAME_PROMPT,
         messages=[{"role": "user", "content": message}],
     )
     text = response.content[0].text.strip()
-    if text.upper().startswith("NONE") or len(text) < 2 or len(text) > 60:
-        return None
-    cleaned = _clean(text)
-    return cleaned if len(cleaned) >= 2 else None
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None, None
+    return _clean(data.get("first_name")), _clean(data.get("last_name"))

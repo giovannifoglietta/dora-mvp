@@ -23,11 +23,19 @@ class Client(Base):
     __tablename__ = "clients"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     practitioner_id = Column(UUID(as_uuid=True), ForeignKey("practitioners.id", ondelete="CASCADE"))
-    name = Column(String(100), nullable=False)
+    name = Column(String(100), nullable=False)  # legacy / display fallback
+    first_name = Column(String(60))
+    last_name = Column(String(60))
     phone = Column(String(20), nullable=False, unique=True)
     notes = Column(Text)
     first_seen = Column(DateTime(timezone=True), server_default=func.now())
     last_seen = Column(DateTime(timezone=True), server_default=func.now())
+
+    @property
+    def full_name(self) -> str:
+        if self.first_name and self.last_name:
+            return f"{self.first_name} {self.last_name}"
+        return self.first_name or self.name or self.phone
 
 
 class Booking(Base):

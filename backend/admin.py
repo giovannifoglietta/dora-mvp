@@ -29,7 +29,9 @@ def get_state(db: Session = Depends(get_db)):
         "clients": [
             {
                 "id": str(c.id),
-                "name": c.name,
+                "name": c.full_name,
+                "first_name": c.first_name,
+                "last_name": c.last_name,
                 "phone": c.phone,
                 "last_seen": c.last_seen.isoformat() if c.last_seen else None,
             }
@@ -39,7 +41,7 @@ def get_state(db: Session = Depends(get_db)):
             {
                 "id": str(b.id),
                 "client_phone": client_by_id[b.client_id].phone if b.client_id in client_by_id else None,
-                "client_name": client_by_id[b.client_id].name if b.client_id in client_by_id else None,
+                "client_name": client_by_id[b.client_id].full_name if b.client_id in client_by_id else None,
                 "service": b.service,
                 "starts_at": b.starts_at.isoformat() if b.starts_at else None,
                 "duration_minutes": b.duration_minutes,

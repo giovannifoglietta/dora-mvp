@@ -9,6 +9,7 @@ from backend.ai.name_extractor import extract_name
 from backend.logic.availability import is_available, find_next_available
 from backend.logic.booking import (
     get_or_create_client,
+    set_client_name,
     create_booking,
     cancel_booking,
     reschedule_booking,
@@ -55,9 +56,10 @@ async def handle_message(db: Session, phone: str, text: str, profile_name: Optio
     state = context.get(phone)
 
     # Onboarding: do we know the client's name yet?
-    has_name = bool(client.name) and client.name != phone
-    if not has_name:
+    if not client.first_name:
         return await _handle_name_capture(db, client, phone, text, state)
+    if not client.last_name and not state.get("skipped_last_name"):
+        return await _handle_lastname_capture(db, client, phone, text, state)
 
     intent_result = await classify_intent(text)
     intent = intent_result.get("intent", "off_topic")
@@ -71,7 +73,8 @@ async def handle_message(db: Session, phone: str, text: str, profile_name: Optio
     merged = {**state.get("entities", {}), **entities}
 
     if intent == "greeting":
-        context.clear(phone)
+        # Preserve onboarding-completion flags; only clear in-flight intent state
+        context.update(phone, pending_intent=None, entities=None, awaiting_name=None, original_text=None)
         return f"Ciao! Sono Dora, l'assistente di Silvia. Vuoi prenotare una lezione?"
 
     if intent == "book":
@@ -95,30 +98,62 @@ async def handle_message(db: Session, phone: str, text: str, profile_name: Optio
     return "Non sono sicura di aver capito. Vuoi prenotare, spostare o cancellare una lezione?"
 
 
+_SKIP_PATTERNS = ("non voglio", "preferisco di no", "no grazie", "lascia stare", "skip", "salta")
+
+
+def _is_skip(text: str) -> bool:
+    t = text.lower().strip()
+    return any(p in t for p in _SKIP_PATTERNS)
+
+
 async def _handle_name_capture(db: Session, client, phone, text, state) -> str:
-    """Handle the onboarding flow where we don't yet know the client's name."""
+    """First step of onboarding: collect first (and optionally last) name."""
     awaiting = state.get("awaiting_name")
+    first, last = await extract_name(text)
 
-    name = await extract_name(text)
-
-    if name:
-        client.name = name
-        db.commit()
-        # If they originally tried to do something (e.g. "ciao sono Marco, vorrei prenotare"),
-        # process the rest of their message now.
+    if first:
+        set_client_name(db, client, first, last)
         original_text = state.get("original_text", text)
         context.update(phone, awaiting_name=None, original_text=None)
 
-        greeting = f"Piacere di conoscerti, {name}! "
-        # Replay the original message to handle their actual request
-        return greeting + await handle_message(db, phone, original_text)
+        if last:
+            # Got both — greet and replay original request
+            greeting = f"Piacere di conoscerti, {first}! "
+            return greeting + await handle_message(db, phone, original_text)
+        # Only first name — ask for last name next
+        context.update(phone, original_text=original_text)
+        return f"Piacere, {first}! Mi dici anche il cognome?"
 
-    # No name found — ask (or re-ask if already pending)
     if awaiting:
         return "Non ho capito il tuo nome. Come ti chiami?"
 
     context.update(phone, awaiting_name=True, original_text=text)
-    return "Ciao! Sono Dora, l'assistente di Silvia. Come posso chiamarti?"
+    return "Ciao! Sono Dora, l'assistente di Silvia. Come posso chiamarti? (nome e cognome)"
+
+
+async def _handle_lastname_capture(db: Session, client, phone, text, state) -> str:
+    """Second step of onboarding: optional last name."""
+    if _is_skip(text):
+        context.update(phone, skipped_last_name=True)
+        original_text = state.get("original_text")
+        if original_text and original_text != text:
+            return await handle_message(db, phone, original_text)
+        return f"Va bene, {client.first_name}. Vuoi prenotare una lezione?"
+
+    first, last = await extract_name(text)
+    # If user wrote a single word as their last name, use it
+    if not last and first:
+        last = first
+        first = client.first_name
+    if last:
+        set_client_name(db, client, first or client.first_name, last)
+        original_text = state.get("original_text")
+        context.update(phone, original_text=None)
+        if original_text and original_text != text:
+            return f"Grazie {client.first_name}! " + await handle_message(db, phone, original_text)
+        return f"Grazie {client.first_name} {last}! Vuoi prenotare una lezione?"
+
+    return "Mi dici il cognome? (oppure scrivi 'salta' se preferisci)"
 
 
 async def _handle_book(db: Session, practitioner, client, phone, entities) -> str:
@@ -151,8 +186,8 @@ async def _handle_book(db: Session, practitioner, client, phone, entities) -> st
             db, practitioner.id, client.id, when,
             service=entities.get("service") or "Pilates Individuale",
         )
-        context.clear(phone)
-        return f"Perfetto! Ti ho prenotata per {_fmt_dt(booking.starts_at.replace(tzinfo=None))}. A presto!"
+        context.update(phone, pending_intent=None, entities=None, awaiting_name=None, original_text=None)
+        return f"Perfetto {client.first_name}! Ti ho prenotata per {_fmt_dt(booking.starts_at.replace(tzinfo=None))}. A presto!"
     except BookingError as e:
         return f"Errore: {e}"
 
@@ -198,7 +233,7 @@ async def _handle_reschedule(db: Session, practitioner, client, phone, entities)
     target = upcoming[0]
     try:
         reschedule_booking(db, target.id, new_when)
-        context.clear(phone)
+        context.update(phone, pending_intent=None, entities=None, awaiting_name=None, original_text=None)
         return f"Fatto! Lezione spostata a {_fmt_dt(new_when)}."
     except BookingError:
         suggestions = find_next_available(db, practitioner.id, new_when.date(), new_when.time())

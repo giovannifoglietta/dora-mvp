@@ -32,6 +32,16 @@ def get_or_create_client(db: Session, practitioner_id, phone: str, name: Optiona
     return client
 
 
+def set_client_name(db: Session, client: Client, first_name: str, last_name: Optional[str] = None) -> Client:
+    client.first_name = first_name
+    if last_name:
+        client.last_name = last_name
+    client.name = f"{first_name} {last_name}".strip() if last_name else first_name
+    db.commit()
+    db.refresh(client)
+    return client
+
+
 def create_booking(
     db: Session,
     practitioner_id,
