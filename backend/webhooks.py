@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Request, Query, Response
 from backend.config import settings
+from backend.ai.classifier import classify_intent
+from backend.ai.extractor import extract_entities
 
 router = APIRouter()
 
@@ -18,5 +20,18 @@ def verify_webhook(
 @router.post("/webhook")
 async def receive_message(request: Request):
     payload = await request.json()
-    print(f"[webhook] received: {payload}")
+    messages = (
+        payload.get("entry", [{}])[0]
+        .get("changes", [{}])[0]
+        .get("value", {})
+        .get("messages", [])
+    )
+    for msg in messages:
+        if msg.get("type") != "text":
+            continue
+        text = msg["text"]["body"]
+        phone = msg["from"]
+        intent_result = await classify_intent(text)
+        entities = await extract_entities(text) if intent_result["intent"] in ("book", "reschedule", "cancel") else {}
+        print(f"[webhook] {phone}: '{text}' → intent={intent_result}, entities={entities}")
     return {"status": "ok"}
