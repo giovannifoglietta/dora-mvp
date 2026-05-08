@@ -5,6 +5,7 @@ from backend.models.schema import Practitioner, Booking
 from backend.ai import context
 from backend.ai.classifier import classify_intent
 from backend.ai.extractor import extract_entities
+from backend.ai.name_extractor import extract_name
 from backend.logic.availability import is_available, find_next_available
 from backend.logic.booking import (
     get_or_create_client,
@@ -40,14 +41,23 @@ def _parse_dt(date_str: Optional[str], time_str: Optional[str]) -> Optional[date
         return None
 
 
-async def handle_message(db: Session, phone: str, text: str) -> str:
-    """Process an incoming message and return the reply text."""
+async def handle_message(db: Session, phone: str, text: str, profile_name: Optional[str] = None) -> str:
+    """Process an incoming message and return the reply text.
+
+    profile_name: name from WhatsApp profile (passed by 360dialog webhook).
+    If provided and we don't have one yet, we use it directly.
+    """
     silvia = db.query(Practitioner).first()
     if not silvia:
         return "Configurazione mancante. Contatta Silvia."
 
-    client = get_or_create_client(db, silvia.id, phone)
+    client = get_or_create_client(db, silvia.id, phone, profile_name)
     state = context.get(phone)
+
+    # Onboarding: do we know the client's name yet?
+    has_name = bool(client.name) and client.name != phone
+    if not has_name:
+        return await _handle_name_capture(db, client, phone, text, state)
 
     intent_result = await classify_intent(text)
     intent = intent_result.get("intent", "off_topic")
@@ -83,6 +93,32 @@ async def handle_message(db: Session, phone: str, text: str) -> str:
         return "La gestione pacchetti arriva presto. Per ora chiedi a Silvia."
 
     return "Non sono sicura di aver capito. Vuoi prenotare, spostare o cancellare una lezione?"
+
+
+async def _handle_name_capture(db: Session, client, phone, text, state) -> str:
+    """Handle the onboarding flow where we don't yet know the client's name."""
+    awaiting = state.get("awaiting_name")
+
+    name = await extract_name(text)
+
+    if name:
+        client.name = name
+        db.commit()
+        # If they originally tried to do something (e.g. "ciao sono Marco, vorrei prenotare"),
+        # process the rest of their message now.
+        original_text = state.get("original_text", text)
+        context.update(phone, awaiting_name=None, original_text=None)
+
+        greeting = f"Piacere di conoscerti, {name}! "
+        # Replay the original message to handle their actual request
+        return greeting + await handle_message(db, phone, original_text)
+
+    # No name found — ask (or re-ask if already pending)
+    if awaiting:
+        return "Non ho capito il tuo nome. Come ti chiami?"
+
+    context.update(phone, awaiting_name=True, original_text=text)
+    return "Ciao! Sono Dora, l'assistente di Silvia. Come posso chiamarti?"
 
 
 async def _handle_book(db: Session, practitioner, client, phone, entities) -> str:
