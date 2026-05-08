@@ -4,3 +4,5 @@ httpx
 pydantic
 python-dotenv
 anthropic
+sqlalchemy
+psycopg[binary]

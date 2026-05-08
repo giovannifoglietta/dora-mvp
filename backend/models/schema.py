@@ -1,0 +1,70 @@
+import uuid
+from sqlalchemy import Column, String, Integer, Boolean, Float, Text, ForeignKey, DateTime, Date
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.sql import func
+from backend.db.database import Base
+
+
+class Practitioner(Base):
+    __tablename__ = "practitioners"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(100), nullable=False)
+    phone = Column(String(20), nullable=False)
+    profession = Column(String(100))
+    working_hours = Column(JSONB, nullable=False)
+    break_minutes = Column(Integer, default=5)
+    services = Column(JSONB, nullable=False)
+    timezone = Column(String(50), default="Europe/Rome")
+    whatsapp_number = Column(String(20))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class Client(Base):
+    __tablename__ = "clients"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    practitioner_id = Column(UUID(as_uuid=True), ForeignKey("practitioners.id", ondelete="CASCADE"))
+    name = Column(String(100), nullable=False)
+    phone = Column(String(20), nullable=False, unique=True)
+    notes = Column(Text)
+    first_seen = Column(DateTime(timezone=True), server_default=func.now())
+    last_seen = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class Booking(Base):
+    __tablename__ = "bookings"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    practitioner_id = Column(UUID(as_uuid=True), ForeignKey("practitioners.id", ondelete="CASCADE"))
+    client_id = Column(UUID(as_uuid=True), ForeignKey("clients.id", ondelete="CASCADE"))
+    service = Column(String(100))
+    starts_at = Column(DateTime(timezone=True), nullable=False)
+    duration_minutes = Column(Integer, nullable=False)
+    status = Column(String(20), default="confirmed")
+    reminder_sent = Column(Boolean, default=False)
+    created_via = Column(String(20), default="whatsapp")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    cancelled_at = Column(DateTime(timezone=True))
+
+
+class Package(Base):
+    __tablename__ = "packages"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    practitioner_id = Column(UUID(as_uuid=True), ForeignKey("practitioners.id", ondelete="CASCADE"))
+    client_id = Column(UUID(as_uuid=True), ForeignKey("clients.id", ondelete="CASCADE"))
+    total_sessions = Column(Integer, nullable=False)
+    used_sessions = Column(Integer, default=0)
+    purchase_date = Column(Date, server_default=func.current_date())
+    expiry_date = Column(Date)
+    payment_status = Column(String(20), default="paid")
+    notes = Column(Text)
+
+
+class Message(Base):
+    __tablename__ = "messages"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    client_id = Column(UUID(as_uuid=True), ForeignKey("clients.id", ondelete="CASCADE"))
+    direction = Column(String(10), nullable=False)
+    body = Column(Text, nullable=False)
+    intent = Column(String(30))
+    entities = Column(JSONB)
+    confidence = Column(Float)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
