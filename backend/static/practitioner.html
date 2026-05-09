@@ -304,6 +304,37 @@
   .conv-list { display: flex; flex-direction: column; }
   .client-row.clickable { cursor: pointer; }
   .client-row.clickable:hover { background: #f8f9fa; }
+
+  /* Today card */
+  .today-card { background: linear-gradient(135deg, #00a884 0%, #018f72 100%); color: white; }
+  .today-card h3 { color: rgba(255,255,255,0.9); }
+  .today-card .next-up {
+    background: rgba(255,255,255,0.15);
+    padding: 10px 14px;
+    border-radius: 8px;
+    margin-bottom: 10px;
+    font-size: 13px;
+  }
+  .today-card .next-up .label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: rgba(255,255,255,0.7);
+    margin-bottom: 2px;
+  }
+  .today-card .today-list .row {
+    background: rgba(255,255,255,0.1);
+    padding: 8px 12px;
+    border-radius: 6px;
+    margin-bottom: 5px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+  }
+  .today-card .today-list .time { font-weight: 600; min-width: 50px; }
+  .today-card .today-list .row.cancelled { opacity: 0.5; text-decoration: line-through; }
+  .today-card .empty { font-size: 13px; opacity: 0.8; }
 </style>
 </head>
 <body>
@@ -336,20 +367,74 @@
       <div class="tab active" onclick="showTab('agenda')">Agenda</div>
       <div class="tab" onclick="showTab('clients')">Clienti</div>
       <div class="tab" onclick="showTab('packages')">Pacchetti</div>
+      <div class="tab" onclick="showTab('blocks')">Blocchi</div>
+      <div class="tab" onclick="showTab('settings')">Impostazioni</div>
       <div class="tab" onclick="showTab('instruct')">Comandi</div>
     </div>
 
     <div id="tab-agenda">
+      <div class="card today-card" id="today-card">
+        <h3>Oggi</h3>
+        <div id="today-content">Caricamento…</div>
+      </div>
       <div class="card">
         <div class="week-header">
           <h2 id="week-label">Settimana</h2>
           <div class="week-nav">
+            <button onclick="openManualBooking()" style="background:#00a884;color:white;border:none;">+ Aggiungi</button>
             <button onclick="changeWeek(-1)">← Precedente</button>
             <button onclick="changeWeek(0)">Oggi</button>
             <button onclick="changeWeek(1)">Successiva →</button>
           </div>
         </div>
         <div id="agenda-content"></div>
+      </div>
+    </div>
+
+    <div id="tab-blocks" class="hidden">
+      <div class="card">
+        <h3>Blocchi orari</h3>
+        <p style="font-size:13px;color:#5d6c7c;margin-bottom:12px;">
+          Aggiungi periodi in cui non lavori (vacanza, malattia, mezza giornata libera).
+          I clienti non possono prenotare durante questi blocchi.
+        </p>
+        <form onsubmit="createBlock(event)" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;align-items:flex-end;">
+          <div>
+            <label style="font-size:11px;color:#5d6c7c;display:block;">Inizio</label>
+            <input id="block-start" type="datetime-local" required style="padding:8px;border:1px solid #d4d8de;border-radius:6px;">
+          </div>
+          <div>
+            <label style="font-size:11px;color:#5d6c7c;display:block;">Fine</label>
+            <input id="block-end" type="datetime-local" required style="padding:8px;border:1px solid #d4d8de;border-radius:6px;">
+          </div>
+          <input id="block-reason" type="text" placeholder="Motivo (opzionale)" style="flex:1;min-width:140px;padding:9px;border:1px solid #d4d8de;border-radius:6px;">
+          <button type="submit" style="padding:9px 16px;background:#00a884;color:white;border:none;border-radius:6px;cursor:pointer;">Blocca</button>
+        </form>
+        <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+          <button onclick="quickBlock('today')" style="background:#eef2f5;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;">Oggi tutto il giorno</button>
+          <button onclick="quickBlock('tomorrow')" style="background:#eef2f5;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;">Domani tutto il giorno</button>
+          <button onclick="quickBlock('week')" style="background:#eef2f5;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;">Settimana di vacanza</button>
+        </div>
+        <div id="blocks-content"></div>
+      </div>
+    </div>
+
+    <div id="tab-settings" class="hidden">
+      <div class="card">
+        <h3>Orari di lavoro</h3>
+        <p style="font-size:13px;color:#5d6c7c;margin-bottom:14px;">
+          Lascia vuoto per indicare un giorno non lavorativo.
+        </p>
+        <div id="hours-editor"></div>
+        <button onclick="saveHours()" style="margin-top:10px;padding:9px 18px;background:#00a884;color:white;border:none;border-radius:6px;cursor:pointer;">Salva orari</button>
+      </div>
+      <div class="card">
+        <h3>Servizi offerti</h3>
+        <div id="services-editor"></div>
+        <button onclick="addService()" style="background:transparent;border:1px dashed #d4d8de;padding:8px 14px;border-radius:6px;cursor:pointer;color:#5d6c7c;font-size:13px;margin-top:8px;">+ Aggiungi servizio</button>
+        <div style="margin-top:12px;">
+          <button onclick="saveServices()" style="padding:9px 18px;background:#00a884;color:white;border:none;border-radius:6px;cursor:pointer;">Salva servizi</button>
+        </div>
       </div>
     </div>
 
@@ -449,11 +534,13 @@ async function logout() {
 function showTab(name) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   event.target.classList.add('active');
-  ['agenda', 'clients', 'packages', 'instruct'].forEach(t => {
+  ['agenda', 'clients', 'packages', 'blocks', 'settings', 'instruct'].forEach(t => {
     $(`tab-${t}`).classList.toggle('hidden', t !== name);
   });
   if (name === 'clients') loadClients();
   if (name === 'packages') loadPackages();
+  if (name === 'blocks') loadBlocks();
+  if (name === 'settings') loadSettings();
 }
 
 function fmtDayName(d, today) {
@@ -468,7 +555,39 @@ function fmtTime(iso) {
   return d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
 }
 
+async function loadToday() {
+  try {
+    const data = await api('/practitioner/api/today');
+    const $t = $('today-content');
+    let html = '';
+    if (data.next_upcoming) {
+      const u = data.next_upcoming;
+      const when = new Date(u.starts_at);
+      const isToday = when.toDateString() === new Date(data.now).toDateString();
+      const label = isToday ? 'oggi alle ' + fmtTime(u.starts_at) : when.toLocaleString('it-IT', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+      html += `<div class="next-up">
+        <div class="label">Prossima lezione</div>
+        <div><strong>${u.client_name}</strong> — ${label}</div>
+      </div>`;
+    }
+    if (data.today.length === 0) {
+      html += '<div class="empty">Nessuna lezione in programma oggi.</div>';
+    } else {
+      html += '<div class="today-list">' + data.today.map(b => `
+        <div class="row ${b.status === 'cancelled' ? 'cancelled' : ''}">
+          <div class="time">${fmtTime(b.starts_at)}</div>
+          <div>${b.client_name} — ${b.service}</div>
+        </div>
+      `).join('') + '</div>';
+    }
+    $t.innerHTML = html;
+  } catch (e) {
+    $('today-content').innerHTML = '<div class="empty">Errore.</div>';
+  }
+}
+
 async function loadAgenda() {
+  loadToday();
   const today = new Date();
   const monday = new Date(today);
   monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
@@ -678,6 +797,284 @@ async function instruct(e) {
   } finally {
     $('instruct-btn').disabled = false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Manual booking modal
+// ---------------------------------------------------------------------------
+
+async function openManualBooking() {
+  const clientsResp = await api('/practitioner/api/clients');
+  const clientOptions = clientsResp.clients.map(c =>
+    `<option value="${c.id}">${c.name} (${c.phone})</option>`
+  ).join('');
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-backdrop';
+  modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+  modal.innerHTML = `
+    <div class="modal" onclick="event.stopPropagation()" style="max-width:420px;">
+      <div class="modal-header">
+        <div style="font-weight:600;">Nuova prenotazione</div>
+        <button class="x" onclick="this.closest('.modal-backdrop').remove()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <form onsubmit="submitManualBooking(event)" style="display:flex;flex-direction:column;gap:10px;">
+          <div>
+            <label style="font-size:12px;color:#5d6c7c;display:block;margin-bottom:3px;">Cliente esistente</label>
+            <select id="mb-client" style="width:100%;padding:8px;border:1px solid #d4d8de;border-radius:6px;">
+              <option value="">— Nuovo cliente —</option>
+              ${clientOptions}
+            </select>
+          </div>
+          <div id="mb-new-client-fields" style="display:flex;gap:8px;">
+            <input id="mb-first-name" placeholder="Nome" style="flex:1;padding:8px;border:1px solid #d4d8de;border-radius:6px;">
+            <input id="mb-last-name" placeholder="Cognome" style="flex:1;padding:8px;border:1px solid #d4d8de;border-radius:6px;">
+          </div>
+          <input id="mb-phone" placeholder="Telefono (es. +39333...)" style="padding:8px;border:1px solid #d4d8de;border-radius:6px;">
+          <div style="display:flex;gap:8px;">
+            <div style="flex:1;">
+              <label style="font-size:12px;color:#5d6c7c;display:block;margin-bottom:3px;">Data e ora</label>
+              <input id="mb-when" type="datetime-local" required style="width:100%;padding:8px;border:1px solid #d4d8de;border-radius:6px;">
+            </div>
+            <div style="width:90px;">
+              <label style="font-size:12px;color:#5d6c7c;display:block;margin-bottom:3px;">Durata</label>
+              <input id="mb-duration" type="number" value="55" min="15" max="240" style="width:100%;padding:8px;border:1px solid #d4d8de;border-radius:6px;">
+            </div>
+          </div>
+          <input id="mb-service" placeholder="Servizio" value="Pilates Individuale" style="padding:8px;border:1px solid #d4d8de;border-radius:6px;">
+          <div id="mb-error" style="color:#c0392b;font-size:12px;min-height:14px;"></div>
+          <button type="submit" style="padding:10px;background:#00a884;color:white;border:none;border-radius:6px;font-weight:500;cursor:pointer;">Prenota</button>
+        </form>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  // Toggle new-client fields visibility
+  const sel = $('mb-client');
+  const fields = $('mb-new-client-fields');
+  const phoneInput = $('mb-phone');
+  const update = () => {
+    const showNew = !sel.value;
+    fields.style.display = showNew ? 'flex' : 'none';
+    phoneInput.style.display = showNew ? 'block' : 'none';
+  };
+  sel.addEventListener('change', update);
+  update();
+}
+
+async function submitManualBooking(e) {
+  e.preventDefault();
+  $('mb-error').textContent = '';
+  const clientId = $('mb-client').value;
+  const startsAt = $('mb-when').value;
+  const duration = parseInt($('mb-duration').value, 10);
+  const service = $('mb-service').value || 'Pilates Individuale';
+
+  try {
+    let id = clientId;
+    if (!id) {
+      const phone = $('mb-phone').value.trim();
+      const firstName = $('mb-first-name').value.trim();
+      const lastName = $('mb-last-name').value.trim();
+      if (!phone || !firstName) {
+        $('mb-error').textContent = 'Telefono e nome sono richiesti per nuovi clienti.';
+        return;
+      }
+      const r = await api('/practitioner/api/clients', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone, first_name: firstName, last_name: lastName }),
+      });
+      id = r.id;
+    }
+    await api('/practitioner/api/bookings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: id,
+        starts_at: startsAt,
+        service,
+        duration_minutes: duration,
+      }),
+    });
+    document.querySelector('.modal-backdrop').remove();
+    loadAgenda();
+  } catch (err) {
+    $('mb-error').textContent = err.message;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Blocks
+// ---------------------------------------------------------------------------
+
+async function loadBlocks() {
+  const data = await api('/practitioner/api/blocks');
+  if (data.blocks.length === 0) {
+    $('blocks-content').innerHTML = '<div class="empty-day">Nessun blocco attivo.</div>';
+    return;
+  }
+  $('blocks-content').innerHTML = data.blocks.map(b => {
+    const start = new Date(b.starts_at);
+    const end = new Date(b.ends_at);
+    const sameDay = start.toDateString() === end.toDateString();
+    const label = sameDay
+      ? `${start.toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short' })} ${fmtTime(b.starts_at)}–${fmtTime(b.ends_at)}`
+      : `${start.toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })} → ${end.toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })}`;
+    return `<div class="client-row">
+      <div class="client-info">
+        <div class="name">${label}</div>
+        ${b.reason ? `<div class="meta">${b.reason}</div>` : ''}
+      </div>
+      <button onclick="deleteBlock('${b.id}')" style="background:transparent;border:1px solid #f0c4c0;color:#c0392b;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;">Rimuovi</button>
+    </div>`;
+  }).join('');
+}
+
+async function createBlock(e) {
+  e.preventDefault();
+  const starts = $('block-start').value;
+  const ends = $('block-end').value;
+  const reason = $('block-reason').value;
+  if (!starts || !ends) return;
+  await api('/practitioner/api/blocks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ starts_at: starts, ends_at: ends, reason }),
+  });
+  $('block-start').value = '';
+  $('block-end').value = '';
+  $('block-reason').value = '';
+  loadBlocks();
+}
+
+function quickBlock(kind) {
+  const now = new Date();
+  let start, end, reason;
+  if (kind === 'today') {
+    start = new Date(now); start.setHours(0, 0, 0, 0);
+    end = new Date(now); end.setHours(23, 59, 0, 0);
+    reason = 'Giornata libera';
+  } else if (kind === 'tomorrow') {
+    start = new Date(now); start.setDate(start.getDate() + 1); start.setHours(0, 0, 0, 0);
+    end = new Date(start); end.setHours(23, 59, 0, 0);
+    reason = 'Giornata libera';
+  } else if (kind === 'week') {
+    start = new Date(now); start.setDate(start.getDate() + 1); start.setHours(0, 0, 0, 0);
+    end = new Date(start); end.setDate(end.getDate() + 7); end.setHours(23, 59, 0, 0);
+    reason = 'Vacanza';
+  }
+  $('block-start').value = toLocalInput(start);
+  $('block-end').value = toLocalInput(end);
+  $('block-reason').value = reason;
+}
+
+function toLocalInput(d) {
+  const tz = d.getTimezoneOffset() * 60000;
+  return new Date(d - tz).toISOString().slice(0, 16);
+}
+
+async function deleteBlock(id) {
+  if (!confirm('Rimuovere questo blocco?')) return;
+  await api('/practitioner/api/blocks/' + id, { method: 'DELETE' });
+  loadBlocks();
+}
+
+// ---------------------------------------------------------------------------
+// Settings: working hours + services
+// ---------------------------------------------------------------------------
+
+let _practitionerCache = null;
+const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+const DAY_LABELS = { mon: 'Lunedì', tue: 'Martedì', wed: 'Mercoledì', thu: 'Giovedì', fri: 'Venerdì', sat: 'Sabato', sun: 'Domenica' };
+
+async function loadSettings() {
+  const me = await api('/practitioner/api/me');
+  _practitionerCache = me;
+  renderHoursEditor(me.working_hours || {});
+  renderServicesEditor(me.services || []);
+}
+
+function renderHoursEditor(wh) {
+  const html = DAY_KEYS.map(d => {
+    const slots = wh[d] || [];
+    const slot = slots[0] || {};
+    const checked = slots.length > 0 ? 'checked' : '';
+    return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;font-size:14px;">
+      <label style="display:flex;align-items:center;gap:6px;width:110px;">
+        <input type="checkbox" data-day="${d}" class="hours-active" ${checked}>
+        ${DAY_LABELS[d]}
+      </label>
+      <input type="time" class="hours-start" data-day="${d}" value="${slot.start || '09:00'}" style="padding:5px;border:1px solid #d4d8de;border-radius:5px;">
+      <span>–</span>
+      <input type="time" class="hours-end" data-day="${d}" value="${slot.end || '18:00'}" style="padding:5px;border:1px solid #d4d8de;border-radius:5px;">
+    </div>`;
+  }).join('');
+  $('hours-editor').innerHTML = html;
+}
+
+async function saveHours() {
+  const wh = {};
+  document.querySelectorAll('.hours-active').forEach(cb => {
+    if (cb.checked) {
+      const day = cb.dataset.day;
+      const s = document.querySelector(`.hours-start[data-day="${day}"]`).value;
+      const e = document.querySelector(`.hours-end[data-day="${day}"]`).value;
+      wh[day] = [{ start: s, end: e }];
+    }
+  });
+  await api('/practitioner/api/settings', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ working_hours: wh }),
+  });
+  alert('Orari salvati!');
+}
+
+function renderServicesEditor(services) {
+  const html = services.map((s, i) => `
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+      <input class="svc-name" data-i="${i}" value="${s.name}" placeholder="Nome" style="flex:2;padding:8px;border:1px solid #d4d8de;border-radius:6px;">
+      <input class="svc-duration" data-i="${i}" type="number" value="${s.duration}" placeholder="Min" style="width:80px;padding:8px;border:1px solid #d4d8de;border-radius:6px;">
+      <input class="svc-price" data-i="${i}" type="number" value="${s.price || ''}" placeholder="€" style="width:80px;padding:8px;border:1px solid #d4d8de;border-radius:6px;">
+      <button onclick="removeService(${i})" style="background:transparent;border:1px solid #f0c4c0;color:#c0392b;padding:6px 10px;border-radius:6px;cursor:pointer;">×</button>
+    </div>
+  `).join('');
+  $('services-editor').innerHTML = html;
+}
+
+function addService() {
+  _practitionerCache.services = _practitionerCache.services || [];
+  _practitionerCache.services.push({ name: '', duration: 55, price: 0 });
+  renderServicesEditor(_practitionerCache.services);
+}
+
+function removeService(i) {
+  _practitionerCache.services.splice(i, 1);
+  renderServicesEditor(_practitionerCache.services);
+}
+
+async function saveServices() {
+  const rows = document.querySelectorAll('.svc-name');
+  const services = [];
+  rows.forEach(r => {
+    const i = r.dataset.i;
+    const name = r.value.trim();
+    if (!name) return;
+    services.push({
+      name,
+      duration: parseInt(document.querySelector(`.svc-duration[data-i="${i}"]`).value, 10) || 55,
+      price: parseFloat(document.querySelector(`.svc-price[data-i="${i}"]`).value) || 0,
+    });
+  });
+  await api('/practitioner/api/settings', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ services }),
+  });
+  alert('Servizi salvati!');
 }
 
 // Try auto-login via existing cookie

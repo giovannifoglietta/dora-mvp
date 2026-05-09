@@ -67,6 +67,16 @@ class Package(Base):
     notes = Column(Text)
 
 
+class TimeBlock(Base):
+    __tablename__ = "time_blocks"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    practitioner_id = Column(UUID(as_uuid=True), ForeignKey("practitioners.id", ondelete="CASCADE"))
+    starts_at = Column(DateTime(timezone=True), nullable=False)
+    ends_at = Column(DateTime(timezone=True), nullable=False)
+    reason = Column(String(200))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class Message(Base):
     __tablename__ = "messages"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

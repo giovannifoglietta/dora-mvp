@@ -13,12 +13,14 @@ from pathlib import Path
 
 from backend.config import settings
 from backend.db.database import get_db
-from backend.models.schema import Practitioner, Client, Booking, Message, Package
+from backend.models.schema import Practitioner, Client, Booking, Message, Package, TimeBlock
 from backend.logic.availability import get_working_slots
 from backend.logic.booking import (
     create_booking,
     cancel_booking,
     reschedule_booking,
+    get_or_create_client,
+    set_client_name,
     BookingError,
 )
 from backend.logic.packages import create_package, list_packages, sessions_remaining
@@ -125,6 +127,56 @@ def agenda(
             }
             for b in bookings
         ],
+    }
+
+
+@router.get("/practitioner/api/today")
+def today_summary(db: Session = Depends(get_db), dora_pract: Optional[str] = Cookie(None)):
+    """Compact 'now' view: today's bookings + the next upcoming one."""
+    p = _get_practitioner(db, dora_pract)
+    now = datetime.now(ROME_TZ)
+    day_start = datetime.combine(now.date(), time.min, tzinfo=ROME_TZ)
+    day_end = day_start + timedelta(days=1)
+
+    todays = (
+        db.query(Booking)
+        .filter(
+            Booking.practitioner_id == p.id,
+            Booking.starts_at >= day_start,
+            Booking.starts_at < day_end,
+        )
+        .order_by(Booking.starts_at)
+        .all()
+    )
+
+    next_upcoming = (
+        db.query(Booking)
+        .filter(
+            Booking.practitioner_id == p.id,
+            Booking.status == "confirmed",
+            Booking.starts_at >= now,
+        )
+        .order_by(Booking.starts_at)
+        .first()
+    )
+
+    clients = {c.id: c for c in db.query(Client).filter_by(practitioner_id=p.id).all()}
+
+    def serialize(b):
+        return {
+            "id": str(b.id),
+            "client_name": clients[b.client_id].full_name if b.client_id in clients else "?",
+            "client_phone": clients[b.client_id].phone if b.client_id in clients else "",
+            "service": b.service,
+            "starts_at": b.starts_at.isoformat(),
+            "duration_minutes": b.duration_minutes,
+            "status": b.status,
+        }
+
+    return {
+        "now": now.isoformat(),
+        "today": [serialize(b) for b in todays],
+        "next_upcoming": serialize(next_upcoming) if next_upcoming else None,
     }
 
 
@@ -326,3 +378,129 @@ async def natural_language_instruction(
     confirm = bool(body.get("confirm", False))
     result = await execute_instruction(db, p, instruction, confirm=confirm)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Clients (manual create)
+# ---------------------------------------------------------------------------
+
+@router.post("/practitioner/api/clients")
+async def create_client_manual(
+    request: Request,
+    db: Session = Depends(get_db),
+    dora_pract: Optional[str] = Cookie(None),
+):
+    p = _get_practitioner(db, dora_pract)
+    body = await request.json()
+    phone = body.get("phone", "").strip()
+    first_name = body.get("first_name", "").strip()
+    last_name = body.get("last_name", "").strip() or None
+    if not phone or not first_name:
+        raise HTTPException(status_code=400, detail="phone and first_name required")
+    existing = db.query(Client).filter_by(phone=phone).first()
+    if existing:
+        if not existing.first_name:
+            set_client_name(db, existing, first_name, last_name)
+        return {"id": str(existing.id), "created": False}
+    client = get_or_create_client(db, p.id, phone, first_name)
+    set_client_name(db, client, first_name, last_name)
+    return {"id": str(client.id), "created": True}
+
+
+# ---------------------------------------------------------------------------
+# Time blocks (vacation, day off, blocked hours)
+# ---------------------------------------------------------------------------
+
+@router.get("/practitioner/api/blocks")
+def list_blocks(db: Session = Depends(get_db), dora_pract: Optional[str] = Cookie(None)):
+    p = _get_practitioner(db, dora_pract)
+    now = datetime.now(ROME_TZ)
+    blocks = (
+        db.query(TimeBlock)
+        .filter(TimeBlock.practitioner_id == p.id, TimeBlock.ends_at >= now)
+        .order_by(TimeBlock.starts_at)
+        .all()
+    )
+    return {
+        "blocks": [
+            {
+                "id": str(b.id),
+                "starts_at": b.starts_at.isoformat(),
+                "ends_at": b.ends_at.isoformat(),
+                "reason": b.reason,
+            }
+            for b in blocks
+        ]
+    }
+
+
+@router.post("/practitioner/api/blocks")
+async def create_block(
+    request: Request,
+    db: Session = Depends(get_db),
+    dora_pract: Optional[str] = Cookie(None),
+):
+    p = _get_practitioner(db, dora_pract)
+    body = await request.json()
+    starts_at = datetime.fromisoformat(body["starts_at"])
+    ends_at = datetime.fromisoformat(body["ends_at"])
+    if ends_at <= starts_at:
+        raise HTTPException(status_code=400, detail="ends_at must be after starts_at")
+    # Localize naive datetimes to Europe/Rome (UI sends local times)
+    if starts_at.tzinfo is None:
+        starts_at = starts_at.replace(tzinfo=ROME_TZ)
+    if ends_at.tzinfo is None:
+        ends_at = ends_at.replace(tzinfo=ROME_TZ)
+    block = TimeBlock(
+        practitioner_id=p.id,
+        starts_at=starts_at,
+        ends_at=ends_at,
+        reason=body.get("reason"),
+    )
+    db.add(block)
+    db.commit()
+    db.refresh(block)
+    return {"id": str(block.id)}
+
+
+@router.delete("/practitioner/api/blocks/{block_id}")
+def delete_block(
+    block_id: str,
+    db: Session = Depends(get_db),
+    dora_pract: Optional[str] = Cookie(None),
+):
+    p = _get_practitioner(db, dora_pract)
+    b = db.get(TimeBlock, block_id)
+    if not b or b.practitioner_id != p.id:
+        raise HTTPException(status_code=404, detail="Block not found")
+    db.delete(b)
+    db.commit()
+    return {"status": "deleted"}
+
+
+# ---------------------------------------------------------------------------
+# Settings: working hours, services, profession
+# ---------------------------------------------------------------------------
+
+@router.patch("/practitioner/api/settings")
+async def update_settings(
+    request: Request,
+    db: Session = Depends(get_db),
+    dora_pract: Optional[str] = Cookie(None),
+):
+    p = _get_practitioner(db, dora_pract)
+    body = await request.json()
+    if "working_hours" in body:
+        # Expect {mon: [{start, end}], ...}; sanitize to known day keys
+        valid_days = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
+        wh = {k: v for k, v in body["working_hours"].items() if k in valid_days and isinstance(v, list)}
+        p.working_hours = wh
+    if "services" in body:
+        p.services = body["services"]
+    if "profession" in body:
+        p.profession = body["profession"]
+    if "break_minutes" in body:
+        p.break_minutes = int(body["break_minutes"])
+    db.commit()
+    db.refresh(p)
+    return {"working_hours": p.working_hours, "services": p.services, "profession": p.profession, "break_minutes": p.break_minutes}

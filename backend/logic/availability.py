@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, time, date
 from typing import Optional
 from sqlalchemy.orm import Session
-from backend.models.schema import Practitioner, Booking
+from backend.models.schema import Practitioner, Booking, TimeBlock
 from backend.timezone import ROME_TZ
 
 DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
@@ -55,12 +55,28 @@ def get_working_slots(db: Session, practitioner_id, target_date: date, slot_minu
         .all()
     )
 
+    # Active time-off blocks overlapping this day
+    blocks = (
+        db.query(TimeBlock)
+        .filter(
+            TimeBlock.practitioner_id == practitioner_id,
+            TimeBlock.starts_at < day_end,
+            TimeBlock.ends_at > day_start,
+        )
+        .all()
+    )
+
     def conflicts(slot_start: datetime) -> bool:
         slot_end = slot_start + timedelta(minutes=slot_minutes)
         for b in existing:
             b_start = _localize(b.starts_at)
             b_end = b_start + timedelta(minutes=b.duration_minutes)
             if slot_start < b_end and slot_end > b_start:
+                return True
+        for blk in blocks:
+            blk_start = _localize(blk.starts_at)
+            blk_end = _localize(blk.ends_at)
+            if slot_start < blk_end and slot_end > blk_start:
                 return True
         return False
 
