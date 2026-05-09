@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dora MVP — Code Audit & Next Steps</title>
+<style>
+:root { color-scheme: light; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: #f8f9fa;
+  color: #1d2733;
+  line-height: 1.6;
+  padding: 24px;
+}
+h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+.subtitle { color: #5d6c7c; font-size: 14px; margin-bottom: 24px; }
+h2 {
+  font-size: 16px; font-weight: 600; margin: 28px 0 12px;
+  padding-bottom: 6px; border-bottom: 2px solid #e3e6eb;
+  display: flex; align-items: center; gap: 8px;
+}
+h3 { font-size: 14px; font-weight: 600; margin: 16px 0 8px; color: #2d3a47; }
+
+.card {
+  background: white;
+  border-radius: 10px;
+  padding: 20px;
+  margin-bottom: 16px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.stat {
+  background: white;
+  border-radius: 10px;
+  padding: 16px;
+  text-align: center;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+.stat .num { font-size: 28px; font-weight: 700; }
+.stat .label { font-size: 12px; color: #5d6c7c; margin-top: 2px; }
+.stat.green .num { color: #00a884; }
+.stat.orange .num { color: #e67e22; }
+.stat.red .num { color: #c0392b; }
+.stat.blue .num { color: #2980b9; }
+
+.issue {
+  padding: 14px 16px;
+  border-radius: 8px;
+  margin-bottom: 10px;
+  border-left: 4px solid;
+}
+.issue.critical { background: #fdf2f2; border-color: #c0392b; }
+.issue.warning { background: #fef9ed; border-color: #e67e22; }
+.issue.info { background: #eef6fc; border-color: #2980b9; }
+.issue .tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-right: 6px;
+}
+.issue.critical .tag { background: #c0392b; color: white; }
+.issue.warning .tag { background: #e67e22; color: white; }
+.issue.info .tag { background: #2980b9; color: white; }
+.issue .title { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+.issue .desc { font-size: 13px; color: #3d4f5f; }
+.issue .file { font-size: 11px; color: #8896a4; font-family: monospace; margin-top: 4px; }
+code {
+  background: #f0f2f5;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-family: 'SF Mono', Monaco, monospace;
+}
+
+.step {
+  display: flex;
+  gap: 14px;
+  padding: 14px 0;
+  border-bottom: 1px solid #f0f2f5;
+}
+.step:last-child { border-bottom: none; }
+.step-num {
+  width: 28px; height: 28px;
+  background: #00a884;
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 13px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.step-num.done { background: #b0b8c2; }
+.step-content { flex: 1; }
+.step-title { font-weight: 600; font-size: 14px; }
+.step-desc { font-size: 13px; color: #5d6c7c; margin-top: 2px; }
+.step-tasks { margin-top: 6px; font-size: 13px; }
+.step-tasks li { margin: 3px 0; padding-left: 4px; }
+
+.progress-bar {
+  height: 8px;
+  background: #e3e6eb;
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 8px 0 4px;
+}
+.progress-fill {
+  height: 100%;
+  background: #00a884;
+  border-radius: 4px;
+}
+.progress-label { font-size: 12px; color: #5d6c7c; }
+
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 700px) { .cols { grid-template-columns: 1fr; } }
+
+.good { color: #00a884; }
+.warn { color: #e67e22; }
+</style>
+</head>
+<body>
+
+<h1>Dora MVP — Code Audit & Next Steps</h1>
+<p class="subtitle">Audit of current codebase (May 2026) against PIANO_MVP.md milestones</p>
+
+<!-- Summary stats -->
+<div class="summary-grid">
+  <div class="stat green"><div class="num">14</div><div class="label">Files built</div></div>
+  <div class="stat blue"><div class="num">~1400</div><div class="label">Lines of code</div></div>
+  <div class="stat red"><div class="num">3</div><div class="label">Critical issues</div></div>
+  <div class="stat orange"><div class="num">7</div><div class="label">Warnings</div></div>
+</div>
+
+<!-- Progress -->
+<div class="card">
+  <h3>Overall Progress vs PIANO_MVP.md</h3>
+  <div class="progress-bar"><div class="progress-fill" style="width:65%"></div></div>
+  <div class="progress-label">~65% of MVP plan complete (Weeks 1-4 mostly done, Week 5-6 pending)</div>
+</div>
+
+<!-- CRITICAL ISSUES -->
+<h2>Critical Issues (fix before testing)</h2>
+
+<div class="issue critical">
+  <div class="title"><span class="tag">Critical</span> AI calls are synchronous, but endpoints are async</div>
+  <div class="desc">
+    <code>classifier.py</code>, <code>extractor.py</code>, and <code>name_extractor.py</code> all use the <strong>sync</strong> Anthropic client (<code>anthropic.Anthropic</code>) but are declared as <code>async def</code> functions. This means every AI call <strong>blocks the entire event loop</strong> — while one user's message is being classified, no other request can be served. Under any concurrency (even 2 simultaneous messages), the server will freeze.
+    <br><br>
+    <strong>Fix:</strong> Switch to <code>anthropic.AsyncAnthropic</code> and use <code>await client.messages.create(...)</code>, or run the sync calls in a thread via <code>asyncio.to_thread()</code>.
+  </div>
+  <div class="file">backend/ai/classifier.py:6-16 · extractor.py:6-17 · name_extractor.py:7-41</div>
+</div>
+
+<div class="issue critical">
+  <div class="title"><span class="tag">Critical</span> No timezone handling — all datetimes are naive</div>
+  <div class="desc">
+    The entire codebase uses <strong>naive datetimes</strong> (<code>datetime.utcnow()</code>, <code>datetime.combine(d, t)</code> without tzinfo). The DB schema uses <code>TIMESTAMPTZ</code>, so Supabase stores everything as UTC, but the Python code compares naive local times against UTC-stored times. This will cause bookings to be off by 1-2 hours (Italy is UTC+1/+2).
+    <br><br>
+    <strong>Fix:</strong> Use <code>datetime.now(ZoneInfo("Europe/Rome"))</code> everywhere. Make all datetime comparisons timezone-aware. The <code>Practitioner.timezone</code> field exists but is never used.
+  </div>
+  <div class="file">backend/logic/availability.py:37-38 · booking.py:25,84,124 · orchestrator.py:92</div>
+</div>
+
+<div class="issue critical">
+  <div class="title"><span class="tag">Critical</span> No message logging — conversations are lost</div>
+  <div class="desc">
+    The <code>Message</code> model exists in the schema, but <strong>nothing ever writes to it</strong>. The orchestrator processes messages and returns replies, but doesn't log either the inbound message or the outbound reply. This means: no conversation history for debugging, no data for prompt improvement, and no audit trail.
+    <br><br>
+    <strong>Fix:</strong> Add a <code>log_message()</code> call in the webhook handler or orchestrator, saving direction, body, intent, entities, and confidence for every exchange.
+  </div>
+  <div class="file">backend/webhooks.py:23-41 · orchestrator.py (no logging calls)</div>
+</div>
+
+<!-- WARNINGS -->
+<h2>Warnings (should fix before go-live)</h2>
+
+<div class="issue warning">
+  <div class="title"><span class="tag">Warning</span> 3 separate LLM calls per message — slow and expensive</div>
+  <div class="desc">
+    Each user message triggers up to 3 serial Haiku calls: classify intent, extract entities, and (for new users) extract name. At ~0.5-1s each, that's 1.5-3s latency before the user gets a reply, plus 3x the API cost.
+    <br><br>
+    <strong>Suggestion:</strong> Combine classifier + extractor into a single call that returns both intent and entities in one JSON. The name extractor can stay separate since it only runs during onboarding.
+  </div>
+  <div class="file">backend/orchestrator.py:64-68</div>
+</div>
+
+<div class="issue warning">
+  <div class="title"><span class="tag">Warning</span> Entity extractor doesn't know the day of week</div>
+  <div class="desc">
+    The extractor prompt includes today's date but not the day of the week. When a user says "lunedi" the LLM has to calculate which date that is. Adding the weekday to the prompt would reduce extraction errors.
+    <br><br>
+    <strong>Fix:</strong> Add <code>Oggi e: {weekday}, {today}</code> to the EXTRACT_ENTITIES prompt.
+  </div>
+  <div class="file">backend/ai/prompts.py:15-25</div>
+</div>
+
+<div class="issue warning">
+  <div class="title"><span class="tag">Warning</span> No confirmation step before booking</div>
+  <div class="desc">
+    When a user provides both date and time, <code>_handle_book()</code> creates the booking immediately without asking "Ti prenoto per X alle Y — confermi?". This contradicts PIANO_MVP rule #1 ("Mai prenotare senza conferma") and could lead to accidental bookings.
+    <br><br>
+    <strong>Fix:</strong> Add a confirmation state: set <code>pending_intent="confirm_book"</code> with the proposed datetime, and only call <code>create_booking()</code> when the user says "si"/"confermo".
+  </div>
+  <div class="file">backend/orchestrator.py:159-192</div>
+</div>
+
+<div class="issue warning">
+  <div class="title"><span class="tag">Warning</span> WhatsApp client is a stub</div>
+  <div class="desc">
+    <code>whatsapp.py</code> just prints to console. For testing this is fine, but the plan calls for 360dialog integration by Week 3. The <code>httpx</code> import is unused.
+  </div>
+  <div class="file">backend/whatsapp.py:1-8</div>
+</div>
+
+<div class="issue warning">
+  <div class="title"><span class="tag">Warning</span> No seed script — can't test without manual DB setup</div>
+  <div class="desc">
+    There's no script to insert Silvia's practitioner record, working hours, and services into the database. Anyone cloning the repo can't test without manually writing SQL. The plan calls for a seed script.
+  </div>
+</div>
+
+<div class="issue warning">
+  <div class="title"><span class="tag">Warning</span> In-memory context won't survive restarts</div>
+  <div class="desc">
+    <code>ai/context.py</code> stores conversation state in a Python dict. Every server restart (deploy, crash, Railway restart) wipes all in-flight conversations. A client mid-booking-flow will get a fresh state.
+    <br><br>
+    <strong>Acceptable for MVP</strong> if you're aware of it. For production, move to Redis or a DB table.
+  </div>
+  <div class="file">backend/ai/context.py</div>
+</div>
+
+<div class="issue warning">
+  <div class="title"><span class="tag">Warning</span> No reminder system</div>
+  <div class="desc">
+    The <code>Booking</code> model has <code>reminder_sent</code> but there's no scheduler or cron job to send 24h reminders. The plan puts this in Week 5. The files <code>logic/packages.py</code> and <code>logic/reminders.py</code> from the plan are not created yet.
+  </div>
+</div>
+
+<!-- SUGGESTIONS -->
+<h2>Suggestions (nice to have)</h2>
+
+<div class="issue info">
+  <div class="title"><span class="tag">Info</span> Add error handling in webhook</div>
+  <div class="desc">
+    If <code>handle_message()</code> throws an unhandled exception, the entire webhook returns a 500 and WhatsApp may retry, causing duplicate processing. Wrap in try/except, log the error, and return 200 so WhatsApp doesn't retry.
+  </div>
+  <div class="file">backend/webhooks.py:23-41</div>
+</div>
+
+<div class="issue info">
+  <div class="title"><span class="tag">Info</span> Deduplicate incoming messages</div>
+  <div class="desc">
+    WhatsApp can deliver the same webhook payload multiple times. Without deduplication (checking <code>message_id</code>), a client could get double-booked. Store processed message IDs in a set or DB table.
+  </div>
+</div>
+
+<div class="issue info">
+  <div class="title"><span class="tag">Info</span> The practitioner NLP instruct endpoint has no confirmation</div>
+  <div class="desc">
+    "Cancella tutto domani" immediately cancels all bookings. There's no "Stai per cancellare 6 prenotazioni — confermi?" step. One typo by Silvia could wipe a full day.
+  </div>
+  <div class="file">backend/ai/practitioner_nlp.py:82-96</div>
+</div>
+
+<div class="issue info">
+  <div class="title"><span class="tag">Info</span> PIN auth is minimal</div>
+  <div class="desc">
+    The practitioner login uses a hardcoded PIN stored in plain text in .env. Acceptable for MVP, but the cookie has no encryption and the PIN has no brute-force protection.
+  </div>
+  <div class="file">backend/practitioner.py:46-61</div>
+</div>
+
+<!-- WHAT'S GOOD -->
+<h2 class="good">What's Working Well</h2>
+<div class="card">
+  <ul style="list-style: none; padding: 0; font-size: 14px;">
+    <li style="padding: 6px 0; border-bottom: 1px solid #f0f2f5;">Clean project structure — modular separation of AI, logic, models, and DB layers</li>
+    <li style="padding: 6px 0; border-bottom: 1px solid #f0f2f5;">Multi-turn conversation flow with state management (name onboarding is well thought out)</li>
+    <li style="padding: 6px 0; border-bottom: 1px solid #f0f2f5;">Practitioner dashboard is surprisingly complete — agenda, clients, NLP commands</li>
+    <li style="padding: 6px 0; border-bottom: 1px solid #f0f2f5;">Test console (index.html) is excellent for development — WhatsApp-style UI with DB state view</li>
+    <li style="padding: 6px 0; border-bottom: 1px solid #f0f2f5;">Availability engine correctly handles working hours, breaks, and booking conflicts</li>
+    <li style="padding: 6px 0; border-bottom: 1px solid #f0f2f5;">Client split name (first_name/last_name) with migration — shows DB evolution thinking</li>
+    <li style="padding: 6px 0; border-bottom: 1px solid #f0f2f5;">Practitioner NLP for Silvia's commands — great UX idea not in original plan</li>
+    <li style="padding: 6px 0;">Good Italian — prompts and responses feel natural, not translated</li>
+  </ul>
+</div>
+
+<!-- NEXT STEPS -->
+<h2>Next Steps — Prioritized</h2>
+<div class="card">
+
+<div class="step">
+  <div class="step-num">1</div>
+  <div class="step-content">
+    <div class="step-title">Fix the 3 critical bugs</div>
+    <div class="step-desc">These will cause real problems during testing. ~2 hours of work.</div>
+    <div class="step-tasks"><ul>
+      <li>Switch AI calls to async (<code>AsyncAnthropic</code> + <code>await</code>)</li>
+      <li>Add timezone awareness with <code>ZoneInfo("Europe/Rome")</code></li>
+      <li>Add message logging in the webhook/orchestrator</li>
+    </ul></div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">2</div>
+  <div class="step-content">
+    <div class="step-title">Add booking confirmation step</div>
+    <div class="step-desc">Prevent accidental bookings. Matches the plan's rule #1. ~1 hour.</div>
+    <div class="step-tasks"><ul>
+      <li>Add <code>confirm_book</code> state in orchestrator</li>
+      <li>Handle "si"/"confermo"/"ok" as confirmation triggers</li>
+    </ul></div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">3</div>
+  <div class="step-content">
+    <div class="step-title">Create seed script + local test flow</div>
+    <div class="step-desc">So anyone (including you) can spin up and test in 2 minutes. ~1 hour.</div>
+    <div class="step-tasks"><ul>
+      <li>Script that inserts Silvia's practitioner record with working hours + services</li>
+      <li>Document: <code>pip install</code> → <code>python seed.py</code> → <code>uvicorn</code> → open /console</li>
+    </ul></div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">4</div>
+  <div class="step-content">
+    <div class="step-title">Merge classifier + extractor into one LLM call</div>
+    <div class="step-desc">Cut latency from ~2s to ~0.7s per message. Cut API costs by 50%. ~2 hours.</div>
+    <div class="step-tasks"><ul>
+      <li>Single prompt that returns <code>{"intent", "confidence", "date", "time", "service"}</code></li>
+      <li>Keep name extractor separate (only runs during onboarding)</li>
+    </ul></div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">5</div>
+  <div class="step-content">
+    <div class="step-title">Implement WhatsApp integration (360dialog)</div>
+    <div class="step-desc">Replace the stub in whatsapp.py with real API calls. Week 3 of the plan. ~3 hours.</div>
+    <div class="step-tasks"><ul>
+      <li>Implement <code>send_message()</code> with 360dialog HTTP API</li>
+      <li>Add <code>mark_as_read()</code></li>
+      <li>Parse 360dialog webhook format (may differ from Cloud API)</li>
+    </ul></div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">6</div>
+  <div class="step-content">
+    <div class="step-title">Build reminder scheduler</div>
+    <div class="step-desc">24h-before reminders via WhatsApp. Week 5 of the plan. ~2 hours.</div>
+    <div class="step-tasks"><ul>
+      <li>Create <code>logic/reminders.py</code> — query bookings 23-25h out, send reminder, mark sent</li>
+      <li>Run via APScheduler or Railway cron</li>
+    </ul></div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">7</div>
+  <div class="step-content">
+    <div class="step-title">Add webhook hardening</div>
+    <div class="step-desc">Error handling + message deduplication. ~1 hour.</div>
+    <div class="step-tasks"><ul>
+      <li>try/except in webhook, always return 200</li>
+      <li>Deduplicate by message_id</li>
+      <li>Add confirmation step to practitioner instruct endpoint</li>
+    </ul></div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">8</div>
+  <div class="step-content">
+    <div class="step-title">Deploy + end-to-end test</div>
+    <div class="step-desc">Get it running on Railway, test full WhatsApp flow. Week 6 of the plan.</div>
+    <div class="step-tasks"><ul>
+      <li>Deploy backend to Railway</li>
+      <li>Connect 360dialog webhook</li>
+      <li>Run through all conversation flows with a real phone</li>
+      <li>Test concurrent users</li>
+    </ul></div>
+  </div>
+</div>
+
+</div>
+
+</body>
+</html>

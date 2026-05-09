@@ -1,12 +1,13 @@
 from datetime import datetime, date, time, timedelta
 from typing import Optional
 from sqlalchemy.orm import Session
-from backend.models.schema import Practitioner, Booking
+from backend.models.schema import Practitioner, Booking, Message
 from backend.ai import context
 from backend.ai.classifier import classify_intent
 from backend.ai.extractor import extract_entities
 from backend.ai.name_extractor import extract_name
 from backend.logic.availability import is_available, find_next_available
+from backend.logic.packages import active_package, sessions_remaining
 from backend.logic.booking import (
     get_or_create_client,
     set_client_name,
@@ -42,6 +43,35 @@ def _parse_dt(date_str: Optional[str], time_str: Optional[str]) -> Optional[date
         return None
 
 
+def _log_message(
+    db: Session,
+    client_id,
+    direction: str,
+    body: str,
+    intent: Optional[str] = None,
+    entities: Optional[dict] = None,
+    confidence: Optional[float] = None,
+):
+    msg = Message(
+        client_id=client_id,
+        direction=direction,
+        body=body,
+        intent=intent,
+        entities=entities,
+        confidence=confidence,
+    )
+    db.add(msg)
+    db.commit()
+
+
+def _normalize_phone(phone: str) -> str:
+    """Strip whatsapp/sip prefixes and non-digits except leading +."""
+    p = phone.strip()
+    if p.startswith("whatsapp:"):
+        p = p[len("whatsapp:"):]
+    return p
+
+
 async def handle_message(db: Session, phone: str, text: str, profile_name: Optional[str] = None) -> str:
     """Process an incoming message and return the reply text.
 
@@ -52,25 +82,64 @@ async def handle_message(db: Session, phone: str, text: str, profile_name: Optio
     if not silvia:
         return "Configurazione mancante. Contatta Silvia."
 
-    client = get_or_create_client(db, silvia.id, phone, profile_name)
-    state = context.get(phone)
+    # If the message comes from the practitioner herself, treat it as an instruction
+    phone_norm = _normalize_phone(phone)
+    pract_phones = {_normalize_phone(silvia.phone or ""), _normalize_phone(silvia.whatsapp_number or "")}
+    pract_phones.discard("")
+    if phone_norm in pract_phones:
+        from backend.ai.practitioner_nlp import execute_instruction
+        result = await execute_instruction(db, silvia, text)
+        return result.get("summary", "Ok.")
 
+    client = get_or_create_client(db, silvia.id, phone, profile_name)
+
+    # Skip the recursive call's logging (recursive calls happen during onboarding flows
+    # when we replay the original message after capturing a name)
+    state = context.get(phone)
+    is_top_level = not state.get("_replaying")
+
+    reply = await _route(db, silvia, client, phone, text, state, is_top_level)
+
+    if is_top_level:
+        _log_message(db, client.id, "outbound", reply)
+    return reply
+
+
+async def _route(db: Session, silvia, client, phone: str, text: str, state: dict, is_top_level: bool) -> str:
     # Onboarding: do we know the client's name yet?
     if not client.first_name:
+        if is_top_level:
+            _log_message(db, client.id, "inbound", text, intent="onboarding_name")
         return await _handle_name_capture(db, client, phone, text, state)
     if not client.last_name and not state.get("skipped_last_name"):
+        if is_top_level:
+            _log_message(db, client.id, "inbound", text, intent="onboarding_lastname")
         return await _handle_lastname_capture(db, client, phone, text, state)
+
+    # Quick keyword shortcuts before LLM classification
+    short = text.strip().lower()
+    if short in ("aiuto", "help", "info", "che puoi fare", "cosa puoi fare"):
+        return ("Posso aiutarti a:\n"
+                "• Prenotare una lezione (es. 'giovedì alle 10')\n"
+                "• Spostare o cancellare una lezione\n"
+                "• Dirti quando è il tuo prossimo appuntamento\n"
+                "• Vedere quante lezioni hai nel pacchetto\n"
+                "Cosa vuoi fare?")
 
     intent_result = await classify_intent(text)
     intent = intent_result.get("intent", "off_topic")
+    confidence = intent_result.get("confidence", 0.0)
 
     needs_entities = intent in ("book", "reschedule", "cancel") or state.get("pending_intent")
     entities = await extract_entities(text) if needs_entities else {}
 
     # Merge entities with pending state (multi-turn)
-    if state.get("pending_intent") and not intent_result.get("confidence", 0) > 0.8:
+    if state.get("pending_intent") and not confidence > 0.8:
         intent = state["pending_intent"]
     merged = {**state.get("entities", {}), **entities}
+
+    if is_top_level:
+        _log_message(db, client.id, "inbound", text, intent=intent, entities=entities or None, confidence=confidence)
 
     if intent == "greeting":
         # Preserve onboarding-completion flags; only clear in-flight intent state
@@ -93,9 +162,34 @@ async def handle_message(db: Session, phone: str, text: str, profile_name: Optio
         return "Non hai lezioni in programma. Vuoi prenotarne una?"
 
     if intent == "package_info":
-        return "La gestione pacchetti arriva presto. Per ora chiedi a Silvia."
+        pkg = active_package(db, client.id)
+        if not pkg:
+            return f"{client.first_name}, non risulta nessun pacchetto attivo. Vuoi parlarne con Silvia?"
+        remaining = sessions_remaining(pkg)
+        expiry = f" (scade il {pkg.expiry_date.strftime('%d/%m/%Y')})" if pkg.expiry_date else ""
+        return f"Hai {remaining} lezioni rimanenti su {pkg.total_sessions}{expiry}."
 
-    return "Non sono sicura di aver capito. Vuoi prenotare, spostare o cancellare una lezione?"
+    return _fallback_reply(client, text, confidence)
+
+
+def _fallback_reply(client, text: str, confidence: float) -> str:
+    """Generate a contextual fallback when intent is unclear or off-topic."""
+    short = text.strip().lower()
+    name = client.first_name or ""
+    # Common patterns we can heuristically nudge
+    if any(w in short for w in ["grazie", "ok", "perfetto", "va bene"]):
+        return f"Di nulla{', ' + name if name else ''}! Se ti serve altro, scrivimi pure."
+    if any(w in short for w in ["aiuto", "help", "info"]):
+        return ("Posso aiutarti a:\n"
+                "• Prenotare una lezione (es. 'giovedì alle 10')\n"
+                "• Spostare o cancellare una lezione\n"
+                "• Dirti quando è il tuo prossimo appuntamento\n"
+                "Cosa vuoi fare?")
+    if "?" in text:
+        return ("Su questo non saprei risponderti. Posso aiutarti con prenotazioni, "
+                "spostamenti o cancellazioni. Vuoi fare una di queste cose?")
+    return ("Non sono sicura di aver capito. "
+            "Vuoi prenotare, spostare o cancellare una lezione?")
 
 
 _SKIP_PATTERNS = ("non voglio", "preferisco di no", "no grazie", "lascia stare", "skip", "salta")
@@ -119,7 +213,11 @@ async def _handle_name_capture(db: Session, client, phone, text, state) -> str:
         if last:
             # Got both — greet and replay original request
             greeting = f"Piacere di conoscerti, {first}! "
-            return greeting + await handle_message(db, phone, original_text)
+            context.update(phone, _replaying=True)
+            try:
+                return greeting + await handle_message(db, phone, original_text)
+            finally:
+                context.update(phone, _replaying=None)
         # Only first name — ask for last name next
         context.update(phone, original_text=original_text)
         return f"Piacere, {first}! Mi dici anche il cognome?"
@@ -137,7 +235,11 @@ async def _handle_lastname_capture(db: Session, client, phone, text, state) -> s
         context.update(phone, skipped_last_name=True)
         original_text = state.get("original_text")
         if original_text and original_text != text:
-            return await handle_message(db, phone, original_text)
+            context.update(phone, _replaying=True)
+            try:
+                return await handle_message(db, phone, original_text)
+            finally:
+                context.update(phone, _replaying=None)
         return f"Va bene, {client.first_name}. Vuoi prenotare una lezione?"
 
     first, last = await extract_name(text)
@@ -150,7 +252,11 @@ async def _handle_lastname_capture(db: Session, client, phone, text, state) -> s
         original_text = state.get("original_text")
         context.update(phone, original_text=None)
         if original_text and original_text != text:
-            return f"Grazie {client.first_name}! " + await handle_message(db, phone, original_text)
+            context.update(phone, _replaying=True)
+            try:
+                return f"Grazie {client.first_name}! " + await handle_message(db, phone, original_text)
+            finally:
+                context.update(phone, _replaying=None)
         return f"Grazie {client.first_name} {last}! Vuoi prenotare una lezione?"
 
     return "Mi dici il cognome? (oppure scrivi 'salta' se preferisci)"
@@ -187,7 +293,16 @@ async def _handle_book(db: Session, practitioner, client, phone, entities) -> st
             service=entities.get("service") or "Pilates Individuale",
         )
         context.update(phone, pending_intent=None, entities=None, awaiting_name=None, original_text=None)
-        return f"Perfetto {client.first_name}! Ti ho prenotata per {_fmt_dt(booking.starts_at.replace(tzinfo=None))}. A presto!"
+        confirmation = f"Perfetto {client.first_name}! Ti ho prenotata per {_fmt_dt(booking.starts_at.replace(tzinfo=None))}. A presto!"
+        # Low-balance package alert
+        pkg = active_package(db, client.id)
+        if pkg:
+            remaining = sessions_remaining(pkg)
+            if remaining == 0:
+                confirmation += f"\n\n⚠️ Era l'ultima lezione del tuo pacchetto. Parla con Silvia per rinnovarlo."
+            elif remaining <= 2:
+                confirmation += f"\n\nP.S. Ti restano {remaining} lezioni del pacchetto."
+        return confirmation
     except BookingError as e:
         return f"Errore: {e}"
 

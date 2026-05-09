@@ -13,7 +13,7 @@ from pathlib import Path
 
 from backend.config import settings
 from backend.db.database import get_db
-from backend.models.schema import Practitioner, Client, Booking
+from backend.models.schema import Practitioner, Client, Booking, Message, Package
 from backend.logic.availability import get_working_slots
 from backend.logic.booking import (
     create_booking,
@@ -21,6 +21,7 @@ from backend.logic.booking import (
     reschedule_booking,
     BookingError,
 )
+from backend.logic.packages import create_package, list_packages, sessions_remaining
 
 router = APIRouter()
 
@@ -232,6 +233,80 @@ async def reschedule_manual_booking(
         return {"status": "rescheduled", "starts_at": new_when.isoformat()}
     except BookingError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/practitioner/api/packages")
+def get_packages(db: Session = Depends(get_db), dora_pract: Optional[str] = Cookie(None)):
+    p = _get_practitioner(db, dora_pract)
+    pkgs = list_packages(db, p.id)
+    clients_by_id = {c.id: c for c in db.query(Client).filter_by(practitioner_id=p.id).all()}
+    return {
+        "packages": [
+            {
+                "id": str(pkg.id),
+                "client_id": str(pkg.client_id),
+                "client_name": clients_by_id[pkg.client_id].full_name if pkg.client_id in clients_by_id else "?",
+                "total_sessions": pkg.total_sessions,
+                "used_sessions": pkg.used_sessions,
+                "remaining": sessions_remaining(pkg),
+                "purchase_date": pkg.purchase_date.isoformat() if pkg.purchase_date else None,
+                "expiry_date": pkg.expiry_date.isoformat() if pkg.expiry_date else None,
+                "payment_status": pkg.payment_status,
+                "notes": pkg.notes,
+            }
+            for pkg in pkgs
+        ]
+    }
+
+
+@router.post("/practitioner/api/packages")
+async def create_pkg(
+    request: Request,
+    db: Session = Depends(get_db),
+    dora_pract: Optional[str] = Cookie(None),
+):
+    p = _get_practitioner(db, dora_pract)
+    body = await request.json()
+    expiry = date.fromisoformat(body["expiry_date"]) if body.get("expiry_date") else None
+    pkg = create_package(
+        db, p.id, body["client_id"],
+        total_sessions=int(body["total_sessions"]),
+        expiry_date=expiry,
+        payment_status=body.get("payment_status", "paid"),
+        notes=body.get("notes"),
+    )
+    return {"id": str(pkg.id)}
+
+
+@router.get("/practitioner/api/messages/{client_id}")
+def get_client_messages(
+    client_id: str,
+    db: Session = Depends(get_db),
+    dora_pract: Optional[str] = Cookie(None),
+):
+    p = _get_practitioner(db, dora_pract)
+    client = db.get(Client, client_id)
+    if not client or client.practitioner_id != p.id:
+        raise HTTPException(status_code=404, detail="Client not found")
+    msgs = (
+        db.query(Message)
+        .filter_by(client_id=client.id)
+        .order_by(Message.created_at)
+        .limit(100)
+        .all()
+    )
+    return {
+        "client": {"name": client.full_name, "phone": client.phone},
+        "messages": [
+            {
+                "direction": m.direction,
+                "body": m.body,
+                "intent": m.intent,
+                "created_at": m.created_at.isoformat() if m.created_at else None,
+            }
+            for m in msgs
+        ],
+    }
 
 
 @router.post("/practitioner/api/instruct")

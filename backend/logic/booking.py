@@ -4,19 +4,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from backend.models.schema import Booking, Client, Package, Practitioner
 from backend.logic.availability import is_available
+from backend.logic.packages import active_package
 
 
 class BookingError(Exception):
     pass
-
-
-def _active_package(db: Session, client_id) -> Optional[Package]:
-    return (
-        db.query(Package)
-        .filter(Package.client_id == client_id, Package.used_sessions < Package.total_sessions)
-        .order_by(Package.purchase_date.asc())
-        .first()
-    )
 
 
 def get_or_create_client(db: Session, practitioner_id, phone: str, name: Optional[str] = None) -> Client:
@@ -64,7 +56,7 @@ def create_booking(
     )
     db.add(booking)
 
-    pkg = _active_package(db, client_id)
+    pkg = active_package(db, client_id)
     if pkg:
         pkg.used_sessions += 1
 
@@ -83,7 +75,7 @@ def cancel_booking(db: Session, booking_id) -> Booking:
     booking.status = "cancelled"
     booking.cancelled_at = datetime.utcnow()
 
-    pkg = _active_package(db, booking.client_id)
+    pkg = active_package(db, booking.client_id)
     if pkg and pkg.used_sessions > 0:
         pkg.used_sessions -= 1
 

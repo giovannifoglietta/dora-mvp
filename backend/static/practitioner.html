@@ -278,6 +278,7 @@
     <div class="tabs">
       <div class="tab active" onclick="showTab('agenda')">Agenda</div>
       <div class="tab" onclick="showTab('clients')">Clienti</div>
+      <div class="tab" onclick="showTab('packages')">Pacchetti</div>
       <div class="tab" onclick="showTab('instruct')">Comandi</div>
     </div>
 
@@ -299,6 +300,19 @@
       <div class="card">
         <h3>Lista Clienti</h3>
         <div id="clients-content"></div>
+      </div>
+    </div>
+
+    <div id="tab-packages" class="hidden">
+      <div class="card">
+        <h3>Pacchetti</h3>
+        <form class="package-form" onsubmit="createPackage(event)" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">
+          <select id="pkg-client" required style="flex:1;min-width:160px;padding:10px;border:1px solid #d4d8de;border-radius:6px;"></select>
+          <input id="pkg-total" type="number" min="1" max="100" placeholder="N. lezioni" required style="width:120px;padding:10px;border:1px solid #d4d8de;border-radius:6px;">
+          <input id="pkg-expiry" type="date" style="padding:10px;border:1px solid #d4d8de;border-radius:6px;">
+          <button type="submit" style="padding:10px 16px;background:#00a884;color:white;border:none;border-radius:6px;cursor:pointer;">Aggiungi</button>
+        </form>
+        <div id="packages-content"></div>
       </div>
     </div>
 
@@ -378,10 +392,11 @@ async function logout() {
 function showTab(name) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   event.target.classList.add('active');
-  ['agenda', 'clients', 'instruct'].forEach(t => {
+  ['agenda', 'clients', 'packages', 'instruct'].forEach(t => {
     $(`tab-${t}`).classList.toggle('hidden', t !== name);
   });
   if (name === 'clients') loadClients();
+  if (name === 'packages') loadPackages();
 }
 
 function fmtDayName(d, today) {
@@ -468,6 +483,55 @@ async function loadClients() {
       ${c.upcoming_bookings > 0 ? `<span class="badge">${c.upcoming_bookings} prenotazioni</span>` : ''}
     </div>`;
   }).join('');
+}
+
+async function loadPackages() {
+  const [pkgs, clients] = await Promise.all([
+    api('/practitioner/api/packages'),
+    api('/practitioner/api/clients'),
+  ]);
+  // Populate the client dropdown
+  const sel = $('pkg-client');
+  sel.innerHTML = '<option value="">Cliente...</option>' +
+    clients.clients.map(c => `<option value="${c.id}">${c.name} (${c.phone})</option>`).join('');
+
+  if (pkgs.packages.length === 0) {
+    $('packages-content').innerHTML = '<div class="empty-day">Nessun pacchetto attivo.</div>';
+    return;
+  }
+  $('packages-content').innerHTML = pkgs.packages.map(p => {
+    const pct = Math.round((p.used_sessions / p.total_sessions) * 100);
+    const lowBalance = p.remaining <= 2;
+    return `<div class="client-row" style="flex-direction:column;align-items:stretch;">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <div class="client-avatar">${(p.client_name?.[0] || '?').toUpperCase()}</div>
+        <div class="client-info">
+          <div class="name">${p.client_name}</div>
+          <div class="meta">${p.used_sessions}/${p.total_sessions} usate · ${p.remaining} rimaste${p.expiry_date ? ' · scade ' + new Date(p.expiry_date).toLocaleDateString('it-IT') : ''}</div>
+        </div>
+        ${lowBalance ? '<span class="badge" style="background:#fdebea;color:#c0392b;">in esaurimento</span>' : ''}
+      </div>
+      <div style="margin-top:8px;background:#eef2f5;border-radius:4px;height:6px;overflow:hidden;">
+        <div style="width:${pct}%;height:100%;background:${lowBalance ? '#c0392b' : '#00a884'};"></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function createPackage(e) {
+  e.preventDefault();
+  const client_id = $('pkg-client').value;
+  const total_sessions = parseInt($('pkg-total').value, 10);
+  const expiry_date = $('pkg-expiry').value || null;
+  if (!client_id) return;
+  await api('/practitioner/api/packages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ client_id, total_sessions, expiry_date }),
+  });
+  $('pkg-total').value = '';
+  $('pkg-expiry').value = '';
+  loadPackages();
 }
 
 function useSuggestion(el) {
