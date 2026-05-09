@@ -143,3 +143,47 @@ async def trigger_reminders(db: Session = Depends(get_db)):
     or any external scheduler) every hour."""
     from backend.logic.reminders import send_reminders
     return await send_reminders(db)
+
+
+@router.get("/gcal-status")
+def gcal_status():
+    """Diagnostic: confirm whether Google Calendar integration is wired."""
+    from backend.config import settings
+    from backend.integrations import google_calendar
+    json_set = bool(settings.google_service_account_json)
+    cal_set = bool(settings.google_calendar_id)
+    enabled = google_calendar.is_enabled()
+    return {
+        "json_set": json_set,
+        "json_length": len(settings.google_service_account_json or ""),
+        "calendar_id_set": cal_set,
+        "calendar_id_value": settings.google_calendar_id[:50] + "..." if cal_set else None,
+        "is_enabled": enabled,
+        "disabled_reason": google_calendar._disabled_reason,
+    }
+
+
+@router.post("/gcal-test")
+def gcal_test():
+    """Try creating a real event right now. Returns event id or error."""
+    from datetime import datetime, timedelta
+    from backend.timezone import ROME_TZ
+    from backend.integrations import google_calendar
+
+    class _B:
+        id = "diagnostic-test"
+        service = "Diagnostic Test"
+        duration_minutes = 30
+        created_via = "diagnostic"
+        starts_at = datetime.now(ROME_TZ) + timedelta(hours=1)
+
+    class _C:
+        full_name = "Diagnostic Test"
+        phone = "+39000000000"
+
+    event_id = google_calendar.create_event(_B(), _C())
+    return {
+        "event_id": event_id,
+        "is_enabled": google_calendar.is_enabled(),
+        "disabled_reason": google_calendar._disabled_reason,
+    }
