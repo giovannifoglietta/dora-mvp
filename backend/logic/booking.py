@@ -6,6 +6,7 @@ from backend.models.schema import Booking, Client, Package, Practitioner
 from backend.logic.availability import is_available
 from backend.logic.packages import active_package
 from backend.timezone import ROME_TZ
+from backend.integrations import google_calendar
 
 
 class BookingError(Exception):
@@ -63,6 +64,14 @@ def create_booking(
 
     db.commit()
     db.refresh(booking)
+
+    # Best-effort Google Calendar sync
+    client_obj = db.get(Client, client_id)
+    event_id = google_calendar.create_event(booking, client_obj)
+    if event_id:
+        booking.gcal_event_id = event_id
+        db.commit()
+
     return booking
 
 
@@ -82,6 +91,10 @@ def cancel_booking(db: Session, booking_id) -> Booking:
 
     db.commit()
     db.refresh(booking)
+
+    if booking.gcal_event_id:
+        google_calendar.delete_event(booking.gcal_event_id)
+
     return booking
 
 
@@ -95,6 +108,11 @@ def reschedule_booking(db: Session, booking_id, new_starts_at: datetime) -> Book
     booking.starts_at = new_starts_at
     db.commit()
     db.refresh(booking)
+
+    if booking.gcal_event_id:
+        client_obj = db.get(Client, booking.client_id)
+        google_calendar.update_event(booking.gcal_event_id, booking, client_obj)
+
     return booking
 
 

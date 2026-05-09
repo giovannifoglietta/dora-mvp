@@ -51,6 +51,7 @@ class Booking(Base):
     created_via = Column(String(20), default="whatsapp")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     cancelled_at = Column(DateTime(timezone=True))
+    gcal_event_id = Column(String(255))
 
 
 class Package(Base):

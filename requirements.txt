@@ -6,3 +6,5 @@ python-dotenv
 anthropic
 sqlalchemy
 psycopg[binary]
+google-api-python-client
+google-auth

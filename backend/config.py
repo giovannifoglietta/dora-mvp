@@ -12,6 +12,8 @@ class Settings(BaseModel):
     whatsapp_api_key: str = os.getenv("WHATSAPP_API_KEY", "")
     whatsapp_webhook_token: str = os.getenv("WHATSAPP_WEBHOOK_TOKEN", "dora-verify-token")
     practitioner_pin: str = os.getenv("PRACTITIONER_PIN", "1234")
+    google_service_account_json: str = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+    google_calendar_id: str = os.getenv("GOOGLE_CALENDAR_ID", "")
 
 
 settings = Settings()

@@ -128,6 +128,25 @@
     font-style: italic;
   }
 
+  .scenarios {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 12px;
+    background: #111b21;
+    border-top: 1px solid #222d34;
+  }
+  .scenarios button {
+    background: #2a3942;
+    color: #d1d7db;
+    border: none;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .scenarios button:hover { background: #3b4a54; }
+
   .input-bar {
     padding: 12px 16px;
     background: #202c33;
@@ -187,10 +206,19 @@
     </div>
     <div class="controls">
       <input id="phone" type="text" value="+39555000001" placeholder="Phone">
+      <button onclick="seedDemo()" title="Wipe and seed 5 demo clients">Demo</button>
       <button class="danger" onclick="reset()">Reset</button>
     </div>
   </div>
   <div class="messages" id="messages"></div>
+  <div class="scenarios" id="scenarios">
+    <button type="button" onclick="useText('ciao')">ciao</button>
+    <button type="button" onclick="useText('Vorrei prenotare giovedì alle 10')">prenota giovedì 10</button>
+    <button type="button" onclick="useText('Quante lezioni mi restano?')">pacchetto?</button>
+    <button type="button" onclick="useText('Quando è il mio prossimo appuntamento?')">prossimo?</button>
+    <button type="button" onclick="useText('Domani non riesco')">cancella domani</button>
+    <button type="button" onclick="useText('aiuto')">aiuto</button>
+  </div>
   <form class="input-bar" onsubmit="send(event)">
     <input id="text" type="text" placeholder="Scrivi un messaggio…" autofocus autocomplete="off">
     <button type="submit">Invia</button>
@@ -246,6 +274,11 @@ function addMsg(text, who) {
   return div;
 }
 
+function useText(t) {
+  $text.value = t;
+  $text.focus();
+}
+
 async function send(e) {
   e.preventDefault();
   const text = $text.value.trim();
@@ -277,6 +310,14 @@ async function reset() {
   await fetch('/api/reset', { method: 'POST' });
   $messages.innerHTML = '';
   addMsg('— Stato resettato —', 'system');
+  refreshState();
+}
+
+async function seedDemo() {
+  if (!confirm('Reset e creazione di 5 clienti demo con prenotazioni?')) return;
+  await fetch('/api/seed-demo', { method: 'POST' });
+  $messages.innerHTML = '';
+  addMsg('— Demo seeded: 5 clienti con prenotazioni e un pacchetto in esaurimento —', 'system');
   refreshState();
 }
 
