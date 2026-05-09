@@ -6,6 +6,8 @@ from backend.ai import context
 from backend.timezone import ROME_TZ
 from backend.ai.analyzer import analyze_message
 from backend.ai.name_extractor import extract_name
+from backend.ai import rules
+from backend import responses
 from backend.logic.availability import is_available, find_next_available
 from backend.logic.packages import active_package, sessions_remaining
 from backend.logic.booking import (
@@ -82,7 +84,7 @@ async def handle_message(db: Session, phone: str, text: str, profile_name: Optio
     """
     silvia = db.query(Practitioner).first()
     if not silvia:
-        return "Configurazione mancante. Contatta Silvia."
+        return responses.NO_PRACTITIONER
 
     # If the message comes from the practitioner herself, treat it as an instruction
     phone_norm = _normalize_phone(phone)
@@ -108,15 +110,12 @@ async def handle_message(db: Session, phone: str, text: str, profile_name: Optio
 
 
 async def _route(db: Session, silvia, client, phone: str, text: str, state: dict, is_top_level: bool) -> str:
-    # Onboarding: do we know the client's name yet?
+    # Onboarding: do we know the client's first name yet?
+    # (Last name is optional — Silvia can fill it in from the dashboard.)
     if not client.first_name:
         if is_top_level:
             _log_message(db, client.id, "inbound", text, intent="onboarding_name")
         return await _handle_name_capture(db, client, phone, text, state)
-    if not client.last_name and not state.get("skipped_last_name"):
-        if is_top_level:
-            _log_message(db, client.id, "inbound", text, intent="onboarding_lastname")
-        return await _handle_lastname_capture(db, client, phone, text, state)
 
     # If a booking confirmation is pending, intercept yes/no answers before LLM classify
     if state.get("pending_intent") == "confirm_book":
@@ -129,20 +128,20 @@ async def _route(db: Session, silvia, client, phone: str, text: str, state: dict
             if is_top_level:
                 _log_message(db, client.id, "inbound", text, intent="negate")
             context.update(phone, pending_intent=None, entities=None, proposed_booking=None)
-            return "Ok, nessun problema! Fammi sapere quando vuoi riprenotare."
+            return responses.NEGATION_OK
         # Fall through — they probably said something else (e.g. another time)
 
     # Quick keyword shortcuts before LLM classification
     short = text.strip().lower()
     if short in ("aiuto", "help", "info", "che puoi fare", "cosa puoi fare"):
-        return ("Posso aiutarti a:\n"
-                "• Prenotare una lezione (es. 'giovedì alle 10')\n"
-                "• Spostare o cancellare una lezione\n"
-                "• Dirti quando è il tuo prossimo appuntamento\n"
-                "• Vedere quante lezioni hai nel pacchetto\n"
-                "Cosa vuoi fare?")
+        return responses.HELP
 
-    analysis = await analyze_message(text)
+    # Try the deterministic fast path first; only call the LLM if rules don't match
+    analysis = rules.try_parse(text)
+    parsed_by = "rules" if analysis else "llm"
+    if analysis is None:
+        analysis = await analyze_message(text)
+
     intent = analysis.get("intent", "off_topic")
     confidence = analysis.get("confidence", 0.0)
     entities = {k: v for k, v in analysis.items() if k in ("date", "time", "service")}
@@ -153,12 +152,14 @@ async def _route(db: Session, silvia, client, phone: str, text: str, state: dict
     merged = {**state.get("entities", {}), **entities}
 
     if is_top_level:
-        _log_message(db, client.id, "inbound", text, intent=intent, entities=entities or None, confidence=confidence)
+        log_entities = dict(entities) if entities else {}
+        log_entities["_parsed_by"] = parsed_by
+        _log_message(db, client.id, "inbound", text, intent=intent, entities=log_entities, confidence=confidence)
 
     if intent == "greeting":
         # Preserve onboarding-completion flags; only clear in-flight intent state
         context.update(phone, pending_intent=None, entities=None, awaiting_name=None, original_text=None)
-        return f"Ciao! Sono Dora, l'assistente di Silvia. Vuoi prenotare una lezione?"
+        return responses.GREETING
 
     if intent == "book":
         return await _handle_book(db, silvia, client, phone, merged)
@@ -172,16 +173,16 @@ async def _route(db: Session, silvia, client, phone: str, text: str, state: dict
     if intent == "query":
         nb = get_next_booking(db, client.id)
         if nb:
-            return f"La tua prossima lezione è {_fmt_dt(nb.starts_at)}."
-        return "Non hai lezioni in programma. Vuoi prenotarne una?"
+            return responses.next_appointment(_fmt_dt(nb.starts_at))
+        return responses.NO_NEXT_APPOINTMENT
 
     if intent == "package_info":
         pkg = active_package(db, client.id)
         if not pkg:
-            return f"{client.first_name}, non risulta nessun pacchetto attivo. Vuoi parlarne con Silvia?"
+            return responses.no_active_package(client.first_name)
         remaining = sessions_remaining(pkg)
         expiry = f" (scade il {pkg.expiry_date.strftime('%d/%m/%Y')})" if pkg.expiry_date else ""
-        return f"Hai {remaining} lezioni rimanenti su {pkg.total_sessions}{expiry}."
+        return responses.package_balance(remaining, pkg.total_sessions, expiry)
 
     return _fallback_reply(client, text, confidence)
 
@@ -189,21 +190,13 @@ async def _route(db: Session, silvia, client, phone: str, text: str, state: dict
 def _fallback_reply(client, text: str, confidence: float) -> str:
     """Generate a contextual fallback when intent is unclear or off-topic."""
     short = text.strip().lower()
-    name = client.first_name or ""
-    # Common patterns we can heuristically nudge
     if any(w in short for w in ["grazie", "ok", "perfetto", "va bene"]):
-        return f"Di nulla{', ' + name if name else ''}! Se ti serve altro, scrivimi pure."
+        return responses.thanks_back(client.first_name)
     if any(w in short for w in ["aiuto", "help", "info"]):
-        return ("Posso aiutarti a:\n"
-                "• Prenotare una lezione (es. 'giovedì alle 10')\n"
-                "• Spostare o cancellare una lezione\n"
-                "• Dirti quando è il tuo prossimo appuntamento\n"
-                "Cosa vuoi fare?")
+        return responses.HELP
     if "?" in text:
-        return ("Su questo non saprei risponderti. Posso aiutarti con prenotazioni, "
-                "spostamenti o cancellazioni. Vuoi fare una di queste cose?")
-    return ("Non sono sicura di aver capito. "
-            "Vuoi prenotare, spostare o cancellare una lezione?")
+        return responses.FALLBACK_QUESTION
+    return responses.FALLBACK_GENERIC
 
 
 _SKIP_PATTERNS = ("non voglio", "preferisco di no", "no grazie", "lascia stare", "skip", "salta")
@@ -235,65 +228,29 @@ def _is_negation(text: str) -> bool:
 
 
 async def _handle_name_capture(db: Session, client, phone, text, state) -> str:
-    """First step of onboarding: collect first (and optionally last) name."""
+    """Onboarding: collect first name. Last name is optional and captured if user
+    happens to provide it ("Marco Rossi") but never explicitly requested."""
     awaiting = state.get("awaiting_name")
     first, last = await extract_name(text)
 
     if first:
         set_client_name(db, client, first, last)
-        original_text = state.get("original_text", text)
+        # Replay the message that contains the most info: prefer current text
+        # if it's longer than the saved one (e.g. "sono Marco, vorrei giovedì alle 10")
+        original_text = state.get("original_text") or text
+        if len(text) > len(original_text):
+            original_text = text
         context.update(phone, awaiting_name=None, original_text=None)
-
-        if last:
-            # Got both — greet and replay original request
-            greeting = f"Piacere di conoscerti, {first}! "
-            context.update(phone, _replaying=True)
-            try:
-                return greeting + await handle_message(db, phone, original_text)
-            finally:
-                context.update(phone, _replaying=None)
-        # Only first name — ask for last name next
-        context.update(phone, original_text=original_text)
-        return f"Piacere, {first}! Mi dici anche il cognome?"
+        context.update(phone, _replaying=True)
+        try:
+            return responses.name_acknowledged(first) + " " + await handle_message(db, phone, original_text)
+        finally:
+            context.update(phone, _replaying=None)
 
     if awaiting:
-        return "Non ho capito il tuo nome. Come ti chiami?"
-
+        return responses.NAME_RETRY
     context.update(phone, awaiting_name=True, original_text=text)
-    return "Ciao! Sono Dora, l'assistente di Silvia. Come posso chiamarti? (nome e cognome)"
-
-
-async def _handle_lastname_capture(db: Session, client, phone, text, state) -> str:
-    """Second step of onboarding: optional last name."""
-    if _is_skip(text):
-        context.update(phone, skipped_last_name=True)
-        original_text = state.get("original_text")
-        if original_text and original_text != text:
-            context.update(phone, _replaying=True)
-            try:
-                return await handle_message(db, phone, original_text)
-            finally:
-                context.update(phone, _replaying=None)
-        return f"Va bene, {client.first_name}. Vuoi prenotare una lezione?"
-
-    first, last = await extract_name(text)
-    # If user wrote a single word as their last name, use it
-    if not last and first:
-        last = first
-        first = client.first_name
-    if last:
-        set_client_name(db, client, first or client.first_name, last)
-        original_text = state.get("original_text")
-        context.update(phone, original_text=None)
-        if original_text and original_text != text:
-            context.update(phone, _replaying=True)
-            try:
-                return f"Grazie {client.first_name}! " + await handle_message(db, phone, original_text)
-            finally:
-                context.update(phone, _replaying=None)
-        return f"Grazie {client.first_name} {last}! Vuoi prenotare una lezione?"
-
-    return "Mi dici il cognome? (oppure scrivi 'salta' se preferisci)"
+    return responses.NAME_PROMPT
 
 
 async def _handle_book(db: Session, practitioner, client, phone, entities) -> str:
@@ -305,21 +262,20 @@ async def _handle_book(db: Session, practitioner, client, phone, entities) -> st
             d = date.fromisoformat(entities["date"])
             slots = find_next_available(db, practitioner.id, d)
             if not slots:
-                return f"Quel giorno non ho disponibilità. Vuoi un altro giorno?"
+                return responses.day_no_availability()
             same_day = [s for s in slots if s.date() == d]
             if same_day:
-                return f"Per {DAYS_IT[d.weekday()]} ho disponibile: {_fmt_slots(same_day[:5])}. Quale preferisci?"
-            return f"{DAYS_IT[d.weekday()]} è pieno. Ho liberi: " + ", ".join(_fmt_dt(s) for s in slots[:3])
-        return "Per quando vorresti prenotare? (es. 'giovedì alle 10')"
+                return responses.day_options(DAYS_IT[d.weekday()], _fmt_slots(same_day[:5]))
+            return responses.day_full(DAYS_IT[d.weekday()], (_fmt_dt(s) for s in slots[:3]))
+        return responses.ASK_WHEN
 
     if not is_available(db, practitioner.id, when):
         suggestions = find_next_available(db, practitioner.id, when.date(), when.time())
         if suggestions:
-            return (
-                f"Mi spiace, {_fmt_dt(when)} è già occupato. "
-                f"Ho disponibile: " + ", ".join(_fmt_dt(s) for s in suggestions[:3])
+            return responses.slot_taken_with_alternatives(
+                _fmt_dt(when), (_fmt_dt(s) for s in suggestions[:3])
             )
-        return f"Mi spiace, {_fmt_dt(when)} non è disponibile."
+        return responses.slot_unavailable(_fmt_dt(when))
 
     # Don't book yet — propose and wait for confirmation
     service = entities.get("service") or "Pilates Individuale"
@@ -332,7 +288,7 @@ async def _handle_book(db: Session, practitioner, client, phone, entities) -> st
         },
         entities=None,
     )
-    return f"Ti prenoto per {_fmt_dt(when)} ({service}) — confermi?"
+    return responses.propose_booking(_fmt_dt(when), service)
 
 
 async def _execute_confirmed_booking(db: Session, practitioner, client, phone, proposed: dict) -> str:
@@ -342,33 +298,30 @@ async def _execute_confirmed_booking(db: Session, practitioner, client, phone, p
     if not is_available(db, practitioner.id, when):
         context.update(phone, pending_intent=None, proposed_booking=None)
         suggestions = find_next_available(db, practitioner.id, when.date(), when.time())
-        if suggestions:
-            return ("Mi spiace, qualcuno ha appena preso quello slot. Ho ancora libero: "
-                    + ", ".join(_fmt_dt(s) for s in suggestions[:3]))
-        return "Mi spiace, lo slot non è più disponibile. Vuoi un altro giorno?"
+        return responses.slot_taken_meanwhile(_fmt_dt(s) for s in suggestions[:3])
 
     try:
         booking = create_booking(db, practitioner.id, client.id, when, service=service)
     except BookingError as e:
-        return f"Errore: {e}"
+        return responses.booking_error(str(e))
 
     context.update(phone, pending_intent=None, entities=None, proposed_booking=None,
                    awaiting_name=None, original_text=None)
-    confirmation = f"Perfetto {client.first_name}! Confermata per {_fmt_dt(booking.starts_at)}. A presto!"
+    confirmation = responses.booking_confirmed(client.first_name, _fmt_dt(booking.starts_at))
     pkg = active_package(db, client.id)
     if pkg:
         remaining = sessions_remaining(pkg)
         if remaining == 0:
-            confirmation += "\n\n⚠️ Era l'ultima lezione del tuo pacchetto. Parla con Silvia per rinnovarlo."
+            confirmation += responses.PACKAGE_LAST_LESSON_ALERT
         elif remaining <= 2:
-            confirmation += f"\n\nP.S. Ti restano {remaining} lezioni del pacchetto."
+            confirmation += responses.package_low_balance_alert(remaining)
     return confirmation
 
 
 async def _handle_cancel(db: Session, client, phone, entities) -> str:
     upcoming = get_upcoming_bookings(db, client.id)
     if not upcoming:
-        return "Non hai lezioni da cancellare."
+        return responses.NO_BOOKINGS_TO_CANCEL
 
     target = None
     if entities.get("date"):
@@ -382,35 +335,31 @@ async def _handle_cancel(db: Session, client, phone, entities) -> str:
 
     if not target:
         listing = "; ".join(_fmt_dt(b.starts_at) for b in upcoming[:3])
-        return f"Quale lezione vuoi cancellare? Hai: {listing}"
+        return responses.which_to_cancel(listing)
 
     cancel_booking(db, target.id)
     context.clear(phone)
-    return f"Ho cancellato la lezione di {_fmt_dt(target.starts_at)}. Vuoi prenotare un altro giorno?"
+    return responses.cancellation_confirmed(_fmt_dt(target.starts_at))
 
 
 async def _handle_reschedule(db: Session, practitioner, client, phone, entities) -> str:
     upcoming = get_upcoming_bookings(db, client.id)
     if not upcoming:
-        return "Non hai lezioni da spostare. Vuoi prenotarne una?"
+        return responses.NO_BOOKINGS_TO_RESCHEDULE
 
     new_when = _parse_dt(entities.get("date"), entities.get("time"))
     if not new_when:
         context.update(phone, pending_intent="reschedule", entities=entities)
         next_b = upcoming[0]
-        return (
-            f"Hai la lezione {_fmt_dt(next_b.starts_at)}. "
-            f"Quando vorresti spostarla?"
-        )
+        return responses.reschedule_prompt(_fmt_dt(next_b.starts_at))
 
     target = upcoming[0]
     try:
         reschedule_booking(db, target.id, new_when)
         context.update(phone, pending_intent=None, entities=None, awaiting_name=None, original_text=None)
-        return f"Fatto! Lezione spostata a {_fmt_dt(new_when)}."
+        return responses.reschedule_confirmed(_fmt_dt(new_when))
     except BookingError:
         suggestions = find_next_available(db, practitioner.id, new_when.date(), new_when.time())
-        return (
-            f"{_fmt_dt(new_when)} non è disponibile. "
-            f"Ho liberi: " + ", ".join(_fmt_dt(s) for s in suggestions[:3])
+        return responses.slot_taken_with_alternatives(
+            _fmt_dt(new_when), (_fmt_dt(s) for s in suggestions[:3])
         )
