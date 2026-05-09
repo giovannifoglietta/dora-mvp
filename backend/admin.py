@@ -60,3 +60,11 @@ def reset_test_data(db: Session = Depends(get_db)):
     db.query(Client).delete()
     db.commit()
     return {"status": "reset"}
+
+
+@router.post("/send-reminders")
+async def trigger_reminders(db: Session = Depends(get_db)):
+    """Send 24h reminders. Hit this from a cron (Railway cron, GitHub Actions,
+    or any external scheduler) every hour."""
+    from backend.logic.reminders import send_reminders
+    return await send_reminders(db)
