@@ -2,8 +2,11 @@
 
 Setup (see README):
 1. Create a GCP project + service account, download the JSON key.
-2. Set env var GOOGLE_SERVICE_ACCOUNT_JSON to the full JSON content
-   (paste it directly into Railway as a single env var).
+2. Set env var GOOGLE_SERVICE_ACCOUNT_JSON to either:
+   - the full JSON content directly, OR
+   - base64-encoded JSON (recommended for Railway and other PaaS where
+     multi-line values can be mangled). Use:
+         python -c "import base64,sys;print(base64.b64encode(sys.stdin.read().encode()).decode())" < key.json
 3. Set GOOGLE_CALENDAR_ID to the calendar's ID (e.g. abc...@group.calendar.google.com).
 4. In Google Calendar, share that calendar with the service account email
    (`...@<project>.iam.gserviceaccount.com`) with "Make changes to events".
@@ -11,6 +14,7 @@ Setup (see README):
 If either env var is missing, every function here is a no-op — bookings still work
 locally without any Google integration.
 """
+import base64
 import json
 import logging
 from datetime import datetime, timedelta
@@ -45,18 +49,8 @@ def _get_service():
         return None
 
     try:
-        raw = settings.google_service_account_json
-        # Railway and similar platforms can mangle multi-line env vars: real newlines
-        # appear inside the JSON instead of escaped \n. Repair by escaping any literal
-        # newlines that occur inside string values (specifically the private_key field).
-        try:
-            info = json.loads(raw)
-        except json.JSONDecodeError:
-            # Fallback: replace raw newlines inside the value with escaped \n
-            # but preserve newlines that separate JSON tokens (none should exist
-            # in single-line input — but we're tolerant either way)
-            repaired = raw.replace("\r\n", "\\n").replace("\n", "\\n")
-            info = json.loads(repaired)
+        raw = settings.google_service_account_json.strip()
+        info = _parse_credentials(raw)
         creds = service_account.Credentials.from_service_account_info(
             info,
             scopes=["https://www.googleapis.com/auth/calendar"],
@@ -67,6 +61,40 @@ def _get_service():
         logger.error(f"Google Calendar init failed: {e}")
         _disabled_reason = str(e)
         return None
+
+
+def _parse_credentials(raw: str) -> dict:
+    """Accept either base64-encoded JSON or raw JSON. Repair common
+    Railway-style env-var mangling (literal newlines inside string values)."""
+    # Try base64 first
+    if not raw.lstrip().startswith("{"):
+        try:
+            decoded = base64.b64decode(raw, validate=True).decode("utf-8")
+            return json.loads(decoded)
+        except Exception:
+            pass
+
+    # Try direct JSON
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+
+    # Last resort: repair literal newlines inside the value. Railway sometimes
+    # turns escaped \n into real newlines, including inside the PEM body.
+    repaired = raw.replace("\r\n", "\n").replace("\n", "\\n")
+    info = json.loads(repaired)
+    # Repair the private_key field if needed: collapse any whitespace inside
+    # the BEGIN/END markers to single spaces.
+    pk = info.get("private_key", "")
+    if pk:
+        # Normalize the BEGIN/END markers
+        pk = pk.replace("BEGIN  PRIVATE  KEY", "BEGIN PRIVATE KEY")
+        pk = pk.replace("END  PRIVATE  KEY", "END PRIVATE KEY")
+        # Restore newlines
+        pk = pk.replace("\\n", "\n")
+        info["private_key"] = pk
+    return info
 
 
 def is_enabled() -> bool:
