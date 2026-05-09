@@ -5,7 +5,7 @@ import anthropic
 from backend.config import settings
 from backend.ai.prompts import EXTRACT_ENTITIES
 
-client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
 DAYS_IT = ["lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato", "domenica"]
 
@@ -57,7 +57,7 @@ async def extract_entities(message: str) -> dict:
         today=today.isoformat(),
         day_calendar=_build_calendar(today),
     )
-    response = client.messages.create(
+    response = await client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=200,
         system=prompt,

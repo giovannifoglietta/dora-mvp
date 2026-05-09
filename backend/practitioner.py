@@ -22,6 +22,7 @@ from backend.logic.booking import (
     BookingError,
 )
 from backend.logic.packages import create_package, list_packages, sessions_remaining
+from backend.timezone import ROME_TZ
 
 router = APIRouter()
 
@@ -98,8 +99,8 @@ def agenda(
         db.query(Booking)
         .filter(
             Booking.practitioner_id == p.id,
-            Booking.starts_at >= datetime.combine(start_date, time.min),
-            Booking.starts_at < datetime.combine(end_date, time.min),
+            Booking.starts_at >= datetime.combine(start_date, time.min, tzinfo=ROME_TZ),
+            Booking.starts_at < datetime.combine(end_date, time.min, tzinfo=ROME_TZ),
         )
         .order_by(Booking.starts_at)
         .all()
@@ -137,7 +138,7 @@ def list_clients(db: Session = Depends(get_db), dora_pract: Optional[str] = Cook
         .all()
     )
     # Count upcoming bookings per client
-    now = datetime.utcnow()
+    now = datetime.now(ROME_TZ)
     upcoming_counts = {}
     rows = (
         db.query(Booking.client_id)
@@ -322,5 +323,6 @@ async def natural_language_instruction(
     if not instruction:
         raise HTTPException(status_code=400, detail="Empty instruction")
     from backend.ai.practitioner_nlp import execute_instruction
-    result = await execute_instruction(db, p, instruction)
+    confirm = bool(body.get("confirm", False))
+    result = await execute_instruction(db, p, instruction, confirm=confirm)
     return result

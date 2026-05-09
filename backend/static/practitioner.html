@@ -228,6 +228,7 @@
     border-left: 3px solid #00a884;
   }
   .instruct-entry.failed { border-left-color: #c0392b; }
+  .instruct-entry.pending { border-left-color: #f5a623; }
   .instruct-entry .q { color: #5d6c7c; font-style: italic; margin-bottom: 4px; }
   .instruct-entry .a { font-weight: 500; }
   .instruct-suggestions {
@@ -539,6 +540,29 @@ function useSuggestion(el) {
   $('instruction').focus();
 }
 
+async function runInstruction(text, confirm = false) {
+  return api('/practitioner/api/instruct', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ instruction: text, confirm }),
+  });
+}
+
+function renderEntry(text, result) {
+  const cls = result.executed ? '' : (result.needs_confirmation ? 'pending' : 'failed');
+  let extra = '';
+  if (result.items && result.items.length) {
+    extra = '<ul style="margin-top:6px;padding-left:18px;font-size:12px;">' +
+      result.items.map(i => `<li>${i.time} — ${i.client}</li>`).join('') + '</ul>';
+  } else if (result.items && !result.items.length && result.needs_confirmation) {
+    extra = '<div style="margin-top:6px;font-size:12px;color:#5d6c7c;">(nessuna prenotazione corrisponde)</div>';
+  }
+  const entry = document.createElement('div');
+  entry.className = `instruct-entry ${cls}`;
+  entry.innerHTML = `<div class="q">"${text}"</div><div class="a">${result.summary}</div>${extra}`;
+  return entry;
+}
+
 async function instruct(e) {
   e.preventDefault();
   const text = $('instruction').value.trim();
@@ -547,21 +571,20 @@ async function instruct(e) {
   $('instruction').value = '';
 
   try {
-    const result = await api('/practitioner/api/instruct', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ instruction: text }),
-    });
-    const cls = result.executed ? '' : 'failed';
-    let extra = '';
-    if (result.items) {
-      extra = '<ul style="margin-top:6px;padding-left:18px;font-size:12px;">' +
-        result.items.map(i => `<li>${i.time} — ${i.client}</li>`).join('') + '</ul>';
+    const result = await runInstruction(text, false);
+
+    if (result.needs_confirmation) {
+      const list = (result.items || []).map(i => `${i.time} — ${i.client}`).join('\n');
+      const ok = confirm(`${result.summary}\n\n${list}\n\nProcedo?`);
+      if (!ok) {
+        $('instruct-history').prepend(renderEntry(text, { ...result, summary: 'Annullato.', executed: false }));
+        return;
+      }
+      const finalResult = await runInstruction(result.confirm_instruction || text, true);
+      $('instruct-history').prepend(renderEntry(text, finalResult));
+    } else {
+      $('instruct-history').prepend(renderEntry(text, result));
     }
-    const entry = document.createElement('div');
-    entry.className = `instruct-entry ${cls}`;
-    entry.innerHTML = `<div class="q">"${text}"</div><div class="a">${result.summary}</div>${extra}`;
-    $('instruct-history').prepend(entry);
     loadAgenda();
   } catch (err) {
     alert('Errore: ' + err.message);

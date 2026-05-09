@@ -5,6 +5,7 @@ from sqlalchemy import and_
 from backend.models.schema import Booking, Client, Package, Practitioner
 from backend.logic.availability import is_available
 from backend.logic.packages import active_package
+from backend.timezone import ROME_TZ
 
 
 class BookingError(Exception):
@@ -14,7 +15,7 @@ class BookingError(Exception):
 def get_or_create_client(db: Session, practitioner_id, phone: str, name: Optional[str] = None) -> Client:
     client = db.query(Client).filter_by(phone=phone).first()
     if client:
-        client.last_seen = datetime.utcnow()
+        client.last_seen = datetime.now(ROME_TZ)
         db.commit()
         return client
     client = Client(practitioner_id=practitioner_id, phone=phone, name=name or phone)
@@ -73,7 +74,7 @@ def cancel_booking(db: Session, booking_id) -> Booking:
         return booking
 
     booking.status = "cancelled"
-    booking.cancelled_at = datetime.utcnow()
+    booking.cancelled_at = datetime.now(ROME_TZ)
 
     pkg = active_package(db, booking.client_id)
     if pkg and pkg.used_sessions > 0:
@@ -103,7 +104,7 @@ def get_upcoming_bookings(db: Session, client_id, limit: int = 5):
         .filter(
             Booking.client_id == client_id,
             Booking.status == "confirmed",
-            Booking.starts_at >= datetime.utcnow(),
+            Booking.starts_at >= datetime.now(ROME_TZ),
         )
         .order_by(Booking.starts_at.asc())
         .limit(limit)

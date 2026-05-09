@@ -3,11 +3,11 @@ import anthropic
 from backend.config import settings
 from backend.ai.prompts import CLASSIFY_INTENT
 
-client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
 
 async def classify_intent(message: str) -> dict:
-    response = client.messages.create(
+    response = await client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=100,
         system=CLASSIFY_INTENT,

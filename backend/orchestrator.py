@@ -3,8 +3,8 @@ from typing import Optional
 from sqlalchemy.orm import Session
 from backend.models.schema import Practitioner, Booking, Message
 from backend.ai import context
-from backend.ai.classifier import classify_intent
-from backend.ai.extractor import extract_entities
+from backend.timezone import ROME_TZ
+from backend.ai.analyzer import analyze_message
 from backend.ai.name_extractor import extract_name
 from backend.logic.availability import is_available, find_next_available
 from backend.logic.packages import active_package, sessions_remaining
@@ -25,6 +25,8 @@ MONTHS_IT = ["", "gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
 
 
 def _fmt_dt(dt: datetime) -> str:
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(ROME_TZ)
     return f"{DAYS_IT[dt.weekday()]} {dt.day} {MONTHS_IT[dt.month]} alle {dt.strftime('%H:%M')}"
 
 
@@ -38,7 +40,7 @@ def _parse_dt(date_str: Optional[str], time_str: Optional[str]) -> Optional[date
     try:
         d = date.fromisoformat(date_str)
         t = time.fromisoformat(time_str if len(time_str) == 5 else time_str + ":00")
-        return datetime.combine(d, t)
+        return datetime.combine(d, t, tzinfo=ROME_TZ)
     except (ValueError, TypeError):
         return None
 
@@ -116,6 +118,20 @@ async def _route(db: Session, silvia, client, phone: str, text: str, state: dict
             _log_message(db, client.id, "inbound", text, intent="onboarding_lastname")
         return await _handle_lastname_capture(db, client, phone, text, state)
 
+    # If a booking confirmation is pending, intercept yes/no answers before LLM classify
+    if state.get("pending_intent") == "confirm_book":
+        proposed = state.get("proposed_booking")
+        if _is_confirmation(text) and proposed:
+            if is_top_level:
+                _log_message(db, client.id, "inbound", text, intent="confirm")
+            return await _execute_confirmed_booking(db, silvia, client, phone, proposed)
+        if _is_negation(text):
+            if is_top_level:
+                _log_message(db, client.id, "inbound", text, intent="negate")
+            context.update(phone, pending_intent=None, entities=None, proposed_booking=None)
+            return "Ok, nessun problema! Fammi sapere quando vuoi riprenotare."
+        # Fall through — they probably said something else (e.g. another time)
+
     # Quick keyword shortcuts before LLM classification
     short = text.strip().lower()
     if short in ("aiuto", "help", "info", "che puoi fare", "cosa puoi fare"):
@@ -126,12 +142,10 @@ async def _route(db: Session, silvia, client, phone: str, text: str, state: dict
                 "• Vedere quante lezioni hai nel pacchetto\n"
                 "Cosa vuoi fare?")
 
-    intent_result = await classify_intent(text)
-    intent = intent_result.get("intent", "off_topic")
-    confidence = intent_result.get("confidence", 0.0)
-
-    needs_entities = intent in ("book", "reschedule", "cancel") or state.get("pending_intent")
-    entities = await extract_entities(text) if needs_entities else {}
+    analysis = await analyze_message(text)
+    intent = analysis.get("intent", "off_topic")
+    confidence = analysis.get("confidence", 0.0)
+    entities = {k: v for k, v in analysis.items() if k in ("date", "time", "service")}
 
     # Merge entities with pending state (multi-turn)
     if state.get("pending_intent") and not confidence > 0.8:
@@ -158,7 +172,7 @@ async def _route(db: Session, silvia, client, phone: str, text: str, state: dict
     if intent == "query":
         nb = get_next_booking(db, client.id)
         if nb:
-            return f"La tua prossima lezione è {_fmt_dt(nb.starts_at.replace(tzinfo=None))}."
+            return f"La tua prossima lezione è {_fmt_dt(nb.starts_at)}."
         return "Non hai lezioni in programma. Vuoi prenotarne una?"
 
     if intent == "package_info":
@@ -198,6 +212,26 @@ _SKIP_PATTERNS = ("non voglio", "preferisco di no", "no grazie", "lascia stare",
 def _is_skip(text: str) -> bool:
     t = text.lower().strip()
     return any(p in t for p in _SKIP_PATTERNS)
+
+
+_CONFIRM_PATTERNS = ("sì", "si", "ok", "okay", "yes", "confermo", "va bene", "perfetto",
+                     "certo", "esatto", "confermato", "d'accordo", "vai")
+_NEGATE_PATTERNS = ("no", "annulla", "lascia stare", "non voglio", "cambia idea", "non più")
+
+
+def _is_confirmation(text: str) -> bool:
+    t = text.lower().strip().rstrip("!.?,")
+    if t in _CONFIRM_PATTERNS:
+        return True
+    # Allow short responses like "sì grazie", "ok confermo"
+    return any(t.startswith(p + " ") or t.startswith(p + ",") or t == p for p in _CONFIRM_PATTERNS)
+
+
+def _is_negation(text: str) -> bool:
+    t = text.lower().strip().rstrip("!.?,")
+    if t in _NEGATE_PATTERNS:
+        return True
+    return any(t.startswith(p + " ") or t.startswith(p + ",") for p in _NEGATE_PATTERNS)
 
 
 async def _handle_name_capture(db: Session, client, phone, text, state) -> str:
@@ -287,24 +321,48 @@ async def _handle_book(db: Session, practitioner, client, phone, entities) -> st
             )
         return f"Mi spiace, {_fmt_dt(when)} non è disponibile."
 
+    # Don't book yet — propose and wait for confirmation
+    service = entities.get("service") or "Pilates Individuale"
+    context.update(
+        phone,
+        pending_intent="confirm_book",
+        proposed_booking={
+            "starts_at": when.isoformat(),
+            "service": service,
+        },
+        entities=None,
+    )
+    return f"Ti prenoto per {_fmt_dt(when)} ({service}) — confermi?"
+
+
+async def _execute_confirmed_booking(db: Session, practitioner, client, phone, proposed: dict) -> str:
+    when = datetime.fromisoformat(proposed["starts_at"])
+    service = proposed.get("service", "Pilates Individuale")
+    # Re-check availability — someone else may have grabbed the slot in the meantime
+    if not is_available(db, practitioner.id, when):
+        context.update(phone, pending_intent=None, proposed_booking=None)
+        suggestions = find_next_available(db, practitioner.id, when.date(), when.time())
+        if suggestions:
+            return ("Mi spiace, qualcuno ha appena preso quello slot. Ho ancora libero: "
+                    + ", ".join(_fmt_dt(s) for s in suggestions[:3]))
+        return "Mi spiace, lo slot non è più disponibile. Vuoi un altro giorno?"
+
     try:
-        booking = create_booking(
-            db, practitioner.id, client.id, when,
-            service=entities.get("service") or "Pilates Individuale",
-        )
-        context.update(phone, pending_intent=None, entities=None, awaiting_name=None, original_text=None)
-        confirmation = f"Perfetto {client.first_name}! Ti ho prenotata per {_fmt_dt(booking.starts_at.replace(tzinfo=None))}. A presto!"
-        # Low-balance package alert
-        pkg = active_package(db, client.id)
-        if pkg:
-            remaining = sessions_remaining(pkg)
-            if remaining == 0:
-                confirmation += f"\n\n⚠️ Era l'ultima lezione del tuo pacchetto. Parla con Silvia per rinnovarlo."
-            elif remaining <= 2:
-                confirmation += f"\n\nP.S. Ti restano {remaining} lezioni del pacchetto."
-        return confirmation
+        booking = create_booking(db, practitioner.id, client.id, when, service=service)
     except BookingError as e:
         return f"Errore: {e}"
+
+    context.update(phone, pending_intent=None, entities=None, proposed_booking=None,
+                   awaiting_name=None, original_text=None)
+    confirmation = f"Perfetto {client.first_name}! Confermata per {_fmt_dt(booking.starts_at)}. A presto!"
+    pkg = active_package(db, client.id)
+    if pkg:
+        remaining = sessions_remaining(pkg)
+        if remaining == 0:
+            confirmation += "\n\n⚠️ Era l'ultima lezione del tuo pacchetto. Parla con Silvia per rinnovarlo."
+        elif remaining <= 2:
+            confirmation += f"\n\nP.S. Ti restano {remaining} lezioni del pacchetto."
+    return confirmation
 
 
 async def _handle_cancel(db: Session, client, phone, entities) -> str:
@@ -323,12 +381,12 @@ async def _handle_cancel(db: Session, client, phone, entities) -> str:
         target = upcoming[0]
 
     if not target:
-        listing = "; ".join(_fmt_dt(b.starts_at.replace(tzinfo=None)) for b in upcoming[:3])
+        listing = "; ".join(_fmt_dt(b.starts_at) for b in upcoming[:3])
         return f"Quale lezione vuoi cancellare? Hai: {listing}"
 
     cancel_booking(db, target.id)
     context.clear(phone)
-    return f"Ho cancellato la lezione di {_fmt_dt(target.starts_at.replace(tzinfo=None))}. Vuoi prenotare un altro giorno?"
+    return f"Ho cancellato la lezione di {_fmt_dt(target.starts_at)}. Vuoi prenotare un altro giorno?"
 
 
 async def _handle_reschedule(db: Session, practitioner, client, phone, entities) -> str:
@@ -341,7 +399,7 @@ async def _handle_reschedule(db: Session, practitioner, client, phone, entities)
         context.update(phone, pending_intent="reschedule", entities=entities)
         next_b = upcoming[0]
         return (
-            f"Hai la lezione {_fmt_dt(next_b.starts_at.replace(tzinfo=None))}. "
+            f"Hai la lezione {_fmt_dt(next_b.starts_at)}. "
             f"Quando vorresti spostarla?"
         )
 

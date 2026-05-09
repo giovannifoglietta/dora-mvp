@@ -14,8 +14,9 @@ from sqlalchemy.orm import Session
 from backend.config import settings
 from backend.models.schema import Booking, Client, Practitioner
 from backend.logic.booking import cancel_booking, reschedule_booking, BookingError
+from backend.timezone import ROME_TZ
 
-client_ai = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+client_ai = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
 _NLP_PROMPT = """Sei un assistente che interpreta istruzioni in italiano da un professionista (insegnante di Pilates) e le converte in azioni strutturate.
 
@@ -40,7 +41,7 @@ Rispondi SOLO con un JSON, senza markdown:
 
 async def parse_instruction(instruction: str) -> dict:
     prompt = _NLP_PROMPT.format(today=date.today().isoformat())
-    response = client_ai.messages.create(
+    response = await client_ai.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=300,
         system=prompt,
@@ -55,14 +56,22 @@ async def parse_instruction(instruction: str) -> dict:
         return {"action": "unknown", "params": {}, "explanation": "Non ho capito l'istruzione."}
 
 
+def _day_window(target_date: date):
+    return (
+        datetime.combine(target_date, datetime.min.time(), tzinfo=ROME_TZ),
+        datetime.combine(target_date + timedelta(days=1), datetime.min.time(), tzinfo=ROME_TZ),
+    )
+
+
 def _bookings_on_date(db: Session, practitioner_id, target_date: date):
+    start, end = _day_window(target_date)
     return (
         db.query(Booking)
         .filter(
             Booking.practitioner_id == practitioner_id,
             Booking.status == "confirmed",
-            Booking.starts_at >= datetime.combine(target_date, datetime.min.time()),
-            Booking.starts_at < datetime.combine(target_date + timedelta(days=1), datetime.min.time()),
+            Booking.starts_at >= start,
+            Booking.starts_at < end,
         )
         .order_by(Booking.starts_at)
         .all()
@@ -79,7 +88,23 @@ def _find_client(db: Session, practitioner_id, name: str) -> Optional[Client]:
     return None
 
 
-async def execute_instruction(db: Session, practitioner: Practitioner, instruction: str) -> dict:
+def _list_items(db: Session, practitioner_id, bookings):
+    clients = {c.id: c for c in db.query(Client).filter_by(practitioner_id=practitioner_id).all()}
+    return [
+        {
+            "time": b.starts_at.astimezone(ROME_TZ).strftime("%a %d/%m %H:%M"),
+            "client": clients[b.client_id].full_name if b.client_id in clients else "?",
+        }
+        for b in bookings
+    ]
+
+
+async def execute_instruction(
+    db: Session,
+    practitioner: Practitioner,
+    instruction: str,
+    confirm: bool = False,
+) -> dict:
     parsed = await parse_instruction(instruction)
     action = parsed.get("action")
     params = parsed.get("params", {})
@@ -87,6 +112,15 @@ async def execute_instruction(db: Session, practitioner: Practitioner, instructi
     if action == "cancel_day":
         d = date.fromisoformat(params["date"])
         bookings = _bookings_on_date(db, practitioner.id, d)
+        if not confirm:
+            return {
+                "action": action,
+                "executed": False,
+                "needs_confirmation": True,
+                "summary": f"Sto per cancellare {len(bookings)} prenotazioni del {d.isoformat()}. Confermi?",
+                "items": _list_items(db, practitioner.id, bookings),
+                "confirm_instruction": instruction,
+            }
         for b in bookings:
             cancel_booking(db, b.id)
         return {
@@ -104,6 +138,15 @@ async def execute_instruction(db: Session, practitioner: Practitioner, instructi
         while d <= end:
             all_b.extend(_bookings_on_date(db, practitioner.id, d))
             d += timedelta(days=1)
+        if not confirm:
+            return {
+                "action": action,
+                "executed": False,
+                "needs_confirmation": True,
+                "summary": f"Sto per cancellare {len(all_b)} prenotazioni dal {start} al {end}. Confermi?",
+                "items": _list_items(db, practitioner.id, all_b),
+                "confirm_instruction": instruction,
+            }
         for b in all_b:
             cancel_booking(db, b.id)
         return {
@@ -121,15 +164,22 @@ async def execute_instruction(db: Session, practitioner: Practitioner, instructi
         q = db.query(Booking).filter(
             Booking.client_id == c.id,
             Booking.status == "confirmed",
-            Booking.starts_at >= datetime.utcnow(),
+            Booking.starts_at >= datetime.now(ROME_TZ),
         )
         if params.get("date"):
             d = date.fromisoformat(params["date"])
-            q = q.filter(
-                Booking.starts_at >= datetime.combine(d, datetime.min.time()),
-                Booking.starts_at < datetime.combine(d + timedelta(days=1), datetime.min.time()),
-            )
+            start, end = _day_window(d)
+            q = q.filter(Booking.starts_at >= start, Booking.starts_at < end)
         bookings = q.all()
+        if not confirm:
+            return {
+                "action": action,
+                "executed": False,
+                "needs_confirmation": True,
+                "summary": f"Sto per cancellare {len(bookings)} prenotazioni di {c.full_name}. Confermi?",
+                "items": _list_items(db, practitioner.id, bookings),
+                "confirm_instruction": instruction,
+            }
         for b in bookings:
             cancel_booking(db, b.id)
         return {
@@ -145,13 +195,14 @@ async def execute_instruction(db: Session, practitioner: Practitioner, instructi
         if not c:
             return {"action": action, "executed": False, "summary": f"Non trovo il cliente '{cname}'."}
         from_date = date.fromisoformat(params["from_date"])
+        start, end = _day_window(from_date)
         target = (
             db.query(Booking)
             .filter(
                 Booking.client_id == c.id,
                 Booking.status == "confirmed",
-                Booking.starts_at >= datetime.combine(from_date, datetime.min.time()),
-                Booking.starts_at < datetime.combine(from_date + timedelta(days=1), datetime.min.time()),
+                Booking.starts_at >= start,
+                Booking.starts_at < end,
             )
             .first()
         )
@@ -160,6 +211,7 @@ async def execute_instruction(db: Session, practitioner: Practitioner, instructi
         new_when = datetime.combine(
             date.fromisoformat(params["to_date"]),
             datetime.strptime(params["to_time"], "%H:%M").time(),
+            tzinfo=ROME_TZ,
         )
         try:
             reschedule_booking(db, target.id, new_when)

@@ -4,7 +4,7 @@ from typing import Optional, Tuple
 import anthropic
 from backend.config import settings
 
-client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
 _NAME_PROMPT = """Estrai il nome e cognome della persona che scrive (cioè il mittente del messaggio).
 
@@ -32,7 +32,7 @@ def _clean(s: Optional[str]) -> Optional[str]:
 
 async def extract_name(message: str) -> Tuple[Optional[str], Optional[str]]:
     """Returns (first_name, last_name). Either or both can be None."""
-    response = client.messages.create(
+    response = await client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=80,
         system=_NAME_PROMPT,
