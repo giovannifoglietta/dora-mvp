@@ -159,7 +159,7 @@ def gcal_status():
         "calendar_id_set": cal_set,
         "calendar_id_value": settings.google_calendar_id[:50] + "..." if cal_set else None,
         "is_enabled": enabled,
-        "disabled_reason": google_calendar._disabled_reason,
+        "disabled_reason": google_calendar.get_disabled_reason(),
     }
 
 
@@ -185,5 +185,5 @@ def gcal_test():
     return {
         "event_id": event_id,
         "is_enabled": google_calendar.is_enabled(),
-        "disabled_reason": google_calendar._disabled_reason,
+        "disabled_reason": google_calendar.get_disabled_reason(),
     }

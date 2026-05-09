@@ -34,32 +34,48 @@ Visit:
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | for calendar sync | Full JSON content of service-account key |
 | `GOOGLE_CALENDAR_ID` | for calendar sync | e.g. `abc...@group.calendar.google.com` |
 
-## Google Calendar setup
+## Google Calendar — OAuth (recommended)
 
-This connects bookings to a Google Calendar so Silvia sees them in her usual calendar app.
+This is the right setup for production: each practitioner connects their own
+Google Calendar with a single click. No JSON files, no calendar sharing.
 
-1. **Create a GCP project**: <https://console.cloud.google.com/projectcreate>
+### One-time GCP setup
+
+1. **Create a GCP project** at <https://console.cloud.google.com/projectcreate>.
 2. **Enable the Google Calendar API**: APIs & Services → Library → "Google Calendar API" → Enable.
-3. **Create a service account**:
-   - IAM & Admin → Service Accounts → Create.
-   - Name it e.g. `dora-calendar-sync`.
-   - Skip the "grant access" steps.
-4. **Create a key**: open the service account → Keys → Add Key → JSON. Download the file.
-5. **Create the calendar in Google Calendar**:
-   - In <https://calendar.google.com>, "+ Other calendars" → Create new calendar.
-   - Name it e.g. "Dora — Pilates" and save.
-6. **Find the calendar ID**:
-   - Settings → pick the calendar → "Integrate calendar" → copy **Calendar ID**.
-7. **Share it with the service account**:
-   - Same settings page → "Share with specific people" → Add the service account's email
-     (looks like `dora-calendar-sync@<project>.iam.gserviceaccount.com`) with permission
-     **"Make changes to events"**.
-8. **Set Railway env vars**:
-   - `GOOGLE_SERVICE_ACCOUNT_JSON` = paste the **entire JSON** from step 4 (Railway accepts multi-line)
-   - `GOOGLE_CALENDAR_ID` = the ID from step 6
+3. **Configure the OAuth consent screen**:
+   - APIs & Services → OAuth consent screen → User Type: **External** → Create.
+   - App name: "Dora", support email: yours.
+   - Add scopes: `auth/calendar`, `auth/userinfo.email`, `openid`.
+   - Add yourself + a few testers as Test users (the consent screen stays in Testing
+     mode until you submit for verification — fine up to 100 users).
+4. **Create OAuth credentials**: APIs & Services → Credentials → **+ Create Credentials**
+   → **OAuth client ID** → Application type: **Web application**.
+   - Authorized redirect URIs: `<your-base-url>/practitioner/api/gcal/callback`
+     (e.g. `https://web-production-816f6.up.railway.app/practitioner/api/gcal/callback`).
+5. Copy the **Client ID** and **Client secret** into Railway env vars:
+   - `GOOGLE_OAUTH_CLIENT_ID`
+   - `GOOGLE_OAUTH_CLIENT_SECRET`
+   - `GOOGLE_OAUTH_REDIRECT_URI` (same URI as in step 4)
 
-Bookings created/cancelled/rescheduled in Dora will now sync to that calendar. Failures
-in calendar sync are logged but never block the booking.
+### Practitioner flow (no setup, just one click)
+
+1. Practitioner logs into `/practitioner` → **Impostazioni** tab.
+2. Clicks **"Connetti Google Calendar"**.
+3. Google's consent screen opens. They pick their account, approve.
+4. They're back in Dora. They can choose which of their calendars to use.
+5. Done. Every booking now syncs to their calendar.
+
+## Google Calendar — Service account (legacy / single-tenant fallback)
+
+For single-tenant testing, you can use a service account that owns a shared
+calendar. This is what we used for Silvia's testing. Set:
+
+- `GOOGLE_SERVICE_ACCOUNT_JSON` — the service-account JSON, base64-encoded
+- `GOOGLE_CALENDAR_ID` — the calendar's ID
+
+If a practitioner has connected via OAuth, that takes precedence. Otherwise the
+service-account fallback is used. If neither is configured, calendar sync is a no-op.
 
 ## Reminder cron
 

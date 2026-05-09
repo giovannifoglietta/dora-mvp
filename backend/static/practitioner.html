@@ -420,6 +420,10 @@
     </div>
 
     <div id="tab-settings" class="hidden">
+      <div class="card" id="gcal-card">
+        <h3>Google Calendar</h3>
+        <div id="gcal-content">Caricamento…</div>
+      </div>
       <div class="card">
         <h3>Orari di lavoro</h3>
         <p style="font-size:13px;color:#5d6c7c;margin-bottom:14px;">
@@ -995,7 +999,91 @@ async function loadSettings() {
   _practitionerCache = me;
   renderHoursEditor(me.working_hours || {});
   renderServicesEditor(me.services || []);
+  loadGcalSection();
 }
+
+async function loadGcalSection() {
+  const $g = $('gcal-content');
+  try {
+    const status = await api('/practitioner/api/gcal/status');
+    if (!status.configured) {
+      $g.innerHTML = `<div class="empty-day">
+        Integrazione Google non configurata sul server.
+      </div>`;
+      return;
+    }
+    if (!status.connected) {
+      $g.innerHTML = `
+        <p style="font-size:13px;color:#5d6c7c;margin-bottom:12px;">
+          Collega il tuo Google Calendar — Dora aggiungerà automaticamente le prenotazioni
+          al calendario di tua scelta.
+        </p>
+        <button onclick="startGcalConnect()" style="padding:10px 18px;background:#4285f4;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:500;">
+          Connetti Google Calendar
+        </button>
+      `;
+      return;
+    }
+    // Connected — show email, calendar selector, disconnect
+    const cals = await api('/practitioner/api/gcal/calendars');
+    const options = cals.calendars
+      .filter(c => c.access_role === 'owner' || c.access_role === 'writer')
+      .map(c => `<option value="${c.id}" ${c.id === status.calendar_id ? 'selected' : ''}>${c.summary}${c.primary ? ' (principale)' : ''}</option>`)
+      .join('');
+    $g.innerHTML = `
+      <div style="font-size:13px;margin-bottom:8px;">
+        Connesso come <strong>${status.email || '?'}</strong>
+      </div>
+      <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:10px;">
+        <div style="flex:1;">
+          <label style="font-size:11px;color:#5d6c7c;display:block;">Calendario di destinazione</label>
+          <select id="gcal-select" style="width:100%;padding:8px;border:1px solid #d4d8de;border-radius:6px;">
+            ${options}
+          </select>
+        </div>
+        <button onclick="saveGcalSelection()" style="padding:9px 14px;background:#00a884;color:white;border:none;border-radius:6px;cursor:pointer;">Salva</button>
+      </div>
+      <button onclick="disconnectGcal()" style="background:transparent;border:1px solid #f0c4c0;color:#c0392b;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;">
+        Disconnetti
+      </button>
+    `;
+  } catch (e) {
+    $g.innerHTML = `<div class="empty-day">Errore: ${e.message}</div>`;
+  }
+}
+
+async function startGcalConnect() {
+  const r = await api('/practitioner/api/gcal/connect');
+  window.location.href = r.authorize_url;
+}
+
+async function saveGcalSelection() {
+  const cal = $('gcal-select').value;
+  await api('/practitioner/api/gcal/calendar', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ calendar_id: cal }),
+  });
+  alert('Calendario aggiornato!');
+}
+
+async function disconnectGcal() {
+  if (!confirm('Disconnettere Google Calendar?')) return;
+  await api('/practitioner/api/gcal/disconnect', { method: 'POST' });
+  loadGcalSection();
+}
+
+// Show a banner if we just came back from the OAuth flow
+(function showOauthResult() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('gcal') === 'connected') {
+    setTimeout(() => alert('Google Calendar connesso!'), 300);
+    window.history.replaceState({}, '', window.location.pathname);
+  } else if (params.get('gcal_error')) {
+    setTimeout(() => alert('Errore Google: ' + params.get('gcal_error')), 300);
+    window.history.replaceState({}, '', window.location.pathname);
+  }
+})();
 
 function renderHoursEditor(wh) {
   const html = DAY_KEYS.map(d => {

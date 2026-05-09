@@ -17,6 +17,9 @@ class Practitioner(Base):
     timezone = Column(String(50), default="Europe/Rome")
     whatsapp_number = Column(String(20))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    gcal_oauth_refresh_token = Column(Text)
+    gcal_oauth_email = Column(String(255))
+    gcal_oauth_calendar_id = Column(String(255))
 
 
 class Client(Base):

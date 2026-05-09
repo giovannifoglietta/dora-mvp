@@ -1,51 +1,46 @@
-"""Google Calendar sync using a service account.
+"""Google Calendar sync.
 
-Setup (see README):
-1. Create a GCP project + service account, download the JSON key.
-2. Set env var GOOGLE_SERVICE_ACCOUNT_JSON to either:
-   - the full JSON content directly, OR
-   - base64-encoded JSON (recommended for Railway and other PaaS where
-     multi-line values can be mangled). Use:
-         python -c "import base64,sys;print(base64.b64encode(sys.stdin.read().encode()).decode())" < key.json
-3. Set GOOGLE_CALENDAR_ID to the calendar's ID (e.g. abc...@group.calendar.google.com).
-4. In Google Calendar, share that calendar with the service account email
-   (`...@<project>.iam.gserviceaccount.com`) with "Make changes to events".
+Two ways to authenticate, in order of preference:
+1. Per-practitioner OAuth (built via google_oauth.py): uses each practitioner's
+   own Google account, bookings appear in their personal calendar of choice.
+2. Service account fallback: a single shared calendar that you share with the
+   service account email. Useful for testing / single-tenant deploys.
 
-If either env var is missing, every function here is a no-op — bookings still work
-locally without any Google integration.
+If neither is configured, every call here is a no-op so bookings still work locally.
 """
 import base64
 import json
 import logging
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Tuple
 
 from backend.config import settings
 from backend.timezone import ROME_TZ
+from backend.integrations import google_oauth
 
 logger = logging.getLogger(__name__)
 
-_service = None
-_disabled_reason: Optional[str] = None
+# Service-account fallback (lazily initialized)
+_sa_service = None
+_sa_disabled_reason: Optional[str] = None
 
 
-def _get_service():
-    """Lazy build the Calendar service. Returns None and caches reason on failure."""
-    global _service, _disabled_reason
-    if _service is not None:
-        return _service
-    if _disabled_reason:
+def _get_sa_service():
+    global _sa_service, _sa_disabled_reason
+    if _sa_service is not None:
+        return _sa_service
+    if _sa_disabled_reason:
         return None
 
     if not settings.google_service_account_json or not settings.google_calendar_id:
-        _disabled_reason = "GOOGLE_SERVICE_ACCOUNT_JSON or GOOGLE_CALENDAR_ID not set"
+        _sa_disabled_reason = "GOOGLE_SERVICE_ACCOUNT_JSON or GOOGLE_CALENDAR_ID not set"
         return None
 
     try:
         from google.oauth2 import service_account
         from googleapiclient.discovery import build
     except ImportError:
-        _disabled_reason = "google-api-python-client not installed"
+        _sa_disabled_reason = "google-api-python-client not installed"
         return None
 
     try:
@@ -55,50 +50,57 @@ def _get_service():
             info,
             scopes=["https://www.googleapis.com/auth/calendar"],
         )
-        _service = build("calendar", "v3", credentials=creds, cache_discovery=False)
-        return _service
+        _sa_service = build("calendar", "v3", credentials=creds, cache_discovery=False)
+        return _sa_service
     except Exception as e:
-        logger.error(f"Google Calendar init failed: {e}")
-        _disabled_reason = str(e)
+        logger.error(f"Service account init failed: {e}")
+        _sa_disabled_reason = str(e)
         return None
 
 
 def _parse_credentials(raw: str) -> dict:
-    """Accept either base64-encoded JSON or raw JSON. Repair common
-    Railway-style env-var mangling (literal newlines inside string values)."""
-    # Try base64 first
     if not raw.lstrip().startswith("{"):
         try:
             decoded = base64.b64decode(raw, validate=True).decode("utf-8")
             return json.loads(decoded)
         except Exception:
             pass
-
-    # Try direct JSON
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
         pass
-
-    # Last resort: repair literal newlines inside the value. Railway sometimes
-    # turns escaped \n into real newlines, including inside the PEM body.
     repaired = raw.replace("\r\n", "\n").replace("\n", "\\n")
     info = json.loads(repaired)
-    # Repair the private_key field if needed: collapse any whitespace inside
-    # the BEGIN/END markers to single spaces.
     pk = info.get("private_key", "")
     if pk:
-        # Normalize the BEGIN/END markers
         pk = pk.replace("BEGIN  PRIVATE  KEY", "BEGIN PRIVATE KEY")
         pk = pk.replace("END  PRIVATE  KEY", "END PRIVATE KEY")
-        # Restore newlines
         pk = pk.replace("\\n", "\n")
         info["private_key"] = pk
     return info
 
 
-def is_enabled() -> bool:
-    return _get_service() is not None
+def _resolve_target(practitioner) -> Tuple[Optional[object], Optional[str], str]:
+    """Return (service, calendar_id, mode) for whichever auth method is live.
+    mode is 'oauth' | 'service_account' | 'disabled'."""
+    # Prefer practitioner OAuth
+    if practitioner is not None and getattr(practitioner, "gcal_oauth_refresh_token", None):
+        svc = google_oauth.build_calendar_service(practitioner.gcal_oauth_refresh_token)
+        if svc:
+            calendar_id = practitioner.gcal_oauth_calendar_id or "primary"
+            return svc, calendar_id, "oauth"
+
+    # Fallback: shared service account calendar
+    sa = _get_sa_service()
+    if sa:
+        return sa, settings.google_calendar_id, "service_account"
+
+    return None, None, "disabled"
+
+
+def is_enabled(practitioner=None) -> bool:
+    svc, _, mode = _resolve_target(practitioner)
+    return svc is not None and mode != "disabled"
 
 
 def _event_payload(booking, client) -> dict:
@@ -121,51 +123,82 @@ def _event_payload(booking, client) -> dict:
     }
 
 
-def create_event(booking, client) -> Optional[str]:
-    """Create a calendar event. Returns the event id, or None if disabled/failed."""
-    svc = _get_service()
+def create_event(booking, client, practitioner=None) -> Optional[str]:
+    svc, calendar_id, mode = _resolve_target(practitioner)
     if not svc:
         return None
     try:
         event = svc.events().insert(
-            calendarId=settings.google_calendar_id,
+            calendarId=calendar_id,
             body=_event_payload(booking, client),
         ).execute()
         return event.get("id")
     except Exception as e:
-        logger.error(f"gcal create_event failed: {e}")
+        logger.error(f"gcal create_event failed ({mode}): {e}")
         return None
 
 
-def update_event(event_id: str, booking, client) -> bool:
-    svc = _get_service()
+def update_event(event_id: str, booking, client, practitioner=None) -> bool:
+    svc, calendar_id, mode = _resolve_target(practitioner)
     if not svc or not event_id:
         return False
     try:
         svc.events().patch(
-            calendarId=settings.google_calendar_id,
+            calendarId=calendar_id,
             eventId=event_id,
             body=_event_payload(booking, client),
         ).execute()
         return True
     except Exception as e:
-        logger.error(f"gcal update_event failed: {e}")
+        logger.error(f"gcal update_event failed ({mode}): {e}")
         return False
 
 
-def delete_event(event_id: str) -> bool:
-    svc = _get_service()
+def delete_event(event_id: str, practitioner=None) -> bool:
+    svc, calendar_id, mode = _resolve_target(practitioner)
     if not svc or not event_id:
         return False
     try:
         svc.events().delete(
-            calendarId=settings.google_calendar_id,
+            calendarId=calendar_id,
             eventId=event_id,
         ).execute()
         return True
     except Exception as e:
-        # 410 Gone is fine (already deleted)
         if "410" in str(e):
             return True
-        logger.error(f"gcal delete_event failed: {e}")
+        logger.error(f"gcal delete_event failed ({mode}): {e}")
         return False
+
+
+def list_calendars_for_practitioner(practitioner) -> list:
+    """List all calendars on the practitioner's connected Google account."""
+    if not practitioner or not practitioner.gcal_oauth_refresh_token:
+        return []
+    svc = google_oauth.build_calendar_service(practitioner.gcal_oauth_refresh_token)
+    if not svc:
+        return []
+    try:
+        result = svc.calendarList().list().execute()
+        items = result.get("items", [])
+        return [
+            {
+                "id": c.get("id"),
+                "summary": c.get("summary"),
+                "primary": c.get("primary", False),
+                "access_role": c.get("accessRole"),
+            }
+            for c in items
+        ]
+    except Exception as e:
+        logger.error(f"list_calendars_for_practitioner failed: {e}")
+        return []
+
+
+# Backward-compatible alias for the existing diagnostic endpoint
+def get_disabled_reason() -> Optional[str]:
+    return _sa_disabled_reason
+
+
+# Module-level attribute kept around so older diagnostic code keeps working
+_disabled_reason = _sa_disabled_reason

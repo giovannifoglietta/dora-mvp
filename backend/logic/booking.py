@@ -65,9 +65,10 @@ def create_booking(
     db.commit()
     db.refresh(booking)
 
-    # Best-effort Google Calendar sync
+    # Best-effort Google Calendar sync (prefers practitioner OAuth, falls back to service account)
     client_obj = db.get(Client, client_id)
-    event_id = google_calendar.create_event(booking, client_obj)
+    practitioner = db.get(Practitioner, practitioner_id)
+    event_id = google_calendar.create_event(booking, client_obj, practitioner=practitioner)
     if event_id:
         booking.gcal_event_id = event_id
         db.commit()
@@ -93,7 +94,8 @@ def cancel_booking(db: Session, booking_id) -> Booking:
     db.refresh(booking)
 
     if booking.gcal_event_id:
-        google_calendar.delete_event(booking.gcal_event_id)
+        practitioner = db.get(Practitioner, booking.practitioner_id)
+        google_calendar.delete_event(booking.gcal_event_id, practitioner=practitioner)
 
     return booking
 
@@ -111,7 +113,8 @@ def reschedule_booking(db: Session, booking_id, new_starts_at: datetime) -> Book
 
     if booking.gcal_event_id:
         client_obj = db.get(Client, booking.client_id)
-        google_calendar.update_event(booking.gcal_event_id, booking, client_obj)
+        practitioner = db.get(Practitioner, booking.practitioner_id)
+        google_calendar.update_event(booking.gcal_event_id, booking, client_obj, practitioner=practitioner)
 
     return booking
 

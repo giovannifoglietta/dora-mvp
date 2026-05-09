@@ -6,7 +6,7 @@ so the rest of the routes can scope queries.
 from datetime import datetime, timedelta, date, time
 from typing import Optional
 from fastapi import APIRouter, Request, Response, Cookie, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, and_
 from pathlib import Path
@@ -481,6 +481,119 @@ def delete_block(
 # ---------------------------------------------------------------------------
 # Settings: working hours, services, profession
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Google OAuth: connect, callback, disconnect, list/select calendar
+# ---------------------------------------------------------------------------
+
+OAUTH_STATE_COOKIE = "dora_oauth_state"
+
+
+@router.get("/practitioner/api/gcal/status")
+def gcal_oauth_status(db: Session = Depends(get_db), dora_pract: Optional[str] = Cookie(None)):
+    p = _get_practitioner(db, dora_pract)
+    from backend.integrations import google_oauth
+    return {
+        "configured": google_oauth.is_configured(),
+        "connected": bool(p.gcal_oauth_refresh_token),
+        "email": p.gcal_oauth_email,
+        "calendar_id": p.gcal_oauth_calendar_id,
+    }
+
+
+@router.get("/practitioner/api/gcal/connect")
+def gcal_connect(response: Response, db: Session = Depends(get_db), dora_pract: Optional[str] = Cookie(None)):
+    """Build the Google authorize URL and set a state cookie for CSRF protection."""
+    _get_practitioner(db, dora_pract)  # auth check
+    from backend.integrations import google_oauth
+    if not google_oauth.is_configured():
+        raise HTTPException(status_code=500, detail="OAuth not configured. Set GOOGLE_OAUTH_CLIENT_ID/SECRET.")
+    url, state = google_oauth.make_authorize_url()
+    response.set_cookie(
+        OAUTH_STATE_COOKIE, state,
+        max_age=600, httponly=True, samesite="lax",
+        secure=settings.app_env == "production",
+    )
+    return {"authorize_url": url}
+
+
+@router.get("/practitioner/api/gcal/callback")
+async def gcal_callback(
+    request: Request,
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+    db: Session = Depends(get_db),
+    dora_pract: Optional[str] = Cookie(None),
+    dora_oauth_state: Optional[str] = Cookie(None),
+):
+    """Google redirects here after the user grants consent."""
+    p = _get_practitioner(db, dora_pract)
+    if error:
+        return RedirectResponse(f"/practitioner?gcal_error={error}")
+    if not code or not state or state != dora_oauth_state:
+        return RedirectResponse("/practitioner?gcal_error=state_mismatch")
+
+    from backend.integrations import google_oauth
+    try:
+        tokens = await google_oauth.exchange_code(code)
+    except Exception as e:
+        return RedirectResponse(f"/practitioner?gcal_error=exchange_failed")
+
+    refresh = tokens.get("refresh_token")
+    access = tokens.get("access_token")
+    if not refresh:
+        # User has previously consented and refresh_token wasn't returned. Try the
+        # alternate flow next time by forcing prompt=consent (already in our URL).
+        return RedirectResponse("/practitioner?gcal_error=no_refresh_token")
+
+    email = ""
+    if access:
+        info = await google_oauth.fetch_userinfo(access)
+        email = info.get("email", "")
+
+    p.gcal_oauth_refresh_token = refresh
+    p.gcal_oauth_email = email
+    p.gcal_oauth_calendar_id = "primary"  # default; user can change later
+    db.commit()
+
+    response = RedirectResponse("/practitioner?gcal=connected")
+    response.delete_cookie(OAUTH_STATE_COOKIE)
+    return response
+
+
+@router.post("/practitioner/api/gcal/disconnect")
+def gcal_disconnect(db: Session = Depends(get_db), dora_pract: Optional[str] = Cookie(None)):
+    p = _get_practitioner(db, dora_pract)
+    p.gcal_oauth_refresh_token = None
+    p.gcal_oauth_email = None
+    p.gcal_oauth_calendar_id = None
+    db.commit()
+    return {"status": "disconnected"}
+
+
+@router.get("/practitioner/api/gcal/calendars")
+def gcal_list_calendars(db: Session = Depends(get_db), dora_pract: Optional[str] = Cookie(None)):
+    p = _get_practitioner(db, dora_pract)
+    from backend.integrations import google_calendar
+    return {"calendars": google_calendar.list_calendars_for_practitioner(p)}
+
+
+@router.patch("/practitioner/api/gcal/calendar")
+async def gcal_set_calendar(
+    request: Request,
+    db: Session = Depends(get_db),
+    dora_pract: Optional[str] = Cookie(None),
+):
+    p = _get_practitioner(db, dora_pract)
+    body = await request.json()
+    cal_id = body.get("calendar_id")
+    if not cal_id:
+        raise HTTPException(status_code=400, detail="calendar_id required")
+    p.gcal_oauth_calendar_id = cal_id
+    db.commit()
+    return {"calendar_id": cal_id}
+
 
 @router.patch("/practitioner/api/settings")
 async def update_settings(
