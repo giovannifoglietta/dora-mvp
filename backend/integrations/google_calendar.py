@@ -45,7 +45,18 @@ def _get_service():
         return None
 
     try:
-        info = json.loads(settings.google_service_account_json)
+        raw = settings.google_service_account_json
+        # Railway and similar platforms can mangle multi-line env vars: real newlines
+        # appear inside the JSON instead of escaped \n. Repair by escaping any literal
+        # newlines that occur inside string values (specifically the private_key field).
+        try:
+            info = json.loads(raw)
+        except json.JSONDecodeError:
+            # Fallback: replace raw newlines inside the value with escaped \n
+            # but preserve newlines that separate JSON tokens (none should exist
+            # in single-line input — but we're tolerant either way)
+            repaired = raw.replace("\r\n", "\\n").replace("\n", "\\n")
+            info = json.loads(repaired)
         creds = service_account.Credentials.from_service_account_info(
             info,
             scopes=["https://www.googleapis.com/auth/calendar"],

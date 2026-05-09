@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Dora — Build Update</title>
+<style>
+  @page { size: A4; margin: 22mm 20mm; }
+  * { box-sizing: border-box; }
+  html, body {
+    font-family: -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    color: #1a2332;
+    font-size: 11pt;
+    line-height: 1.55;
+    margin: 0;
+    padding: 0;
+    background: white;
+  }
+  .doc { max-width: 100%; }
+
+  .header {
+    border-bottom: 3px solid #00a884;
+    padding-bottom: 18px;
+    margin-bottom: 24px;
+  }
+  .header .eyebrow {
+    color: #00a884;
+    font-size: 11pt;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .header h1 {
+    font-size: 28pt;
+    font-weight: 700;
+    margin: 0 0 8px 0;
+    color: #0b141a;
+    letter-spacing: -0.5px;
+  }
+  .header .meta {
+    color: #5d6c7c;
+    font-size: 10pt;
+  }
+  .header .meta span { margin-right: 18px; }
+
+  h2 {
+    font-size: 16pt;
+    font-weight: 600;
+    color: #0b141a;
+    margin: 28px 0 12px 0;
+    letter-spacing: -0.2px;
+  }
+  h3 {
+    font-size: 12pt;
+    font-weight: 600;
+    color: #0b141a;
+    margin: 18px 0 6px 0;
+  }
+  p { margin: 0 0 10px 0; }
+
+  .lead {
+    font-size: 12pt;
+    color: #2c3e50;
+    background: #f7f9fb;
+    padding: 16px 20px;
+    border-left: 4px solid #00a884;
+    border-radius: 4px;
+    margin: 18px 0 24px 0;
+  }
+
+  .try-box {
+    background: #f0f9f5;
+    border: 1px solid #cce8d9;
+    border-radius: 8px;
+    padding: 18px 20px;
+    margin: 18px 0 26px 0;
+  }
+  .try-box h3 {
+    margin-top: 0;
+    color: #018f72;
+  }
+  .try-box .link-row {
+    margin: 10px 0;
+  }
+  .try-box .link-label {
+    font-weight: 600;
+    color: #018f72;
+    display: block;
+    margin-bottom: 2px;
+  }
+  .try-box a {
+    color: #018f72;
+    word-break: break-all;
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 10pt;
+  }
+  .try-box .pin {
+    font-family: "SF Mono", Menlo, monospace;
+    background: white;
+    padding: 1px 6px;
+    border-radius: 3px;
+    border: 1px solid #cce8d9;
+  }
+  .try-box .hint {
+    font-size: 9.5pt;
+    color: #5d6c7c;
+    margin-top: 4px;
+    font-style: italic;
+  }
+
+  ul, ol {
+    margin: 6px 0 12px 0;
+    padding-left: 22px;
+  }
+  ul li, ol li { margin-bottom: 4px; }
+
+  .feature-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin: 14px 0;
+  }
+  .feature-card {
+    background: #f7f9fb;
+    border-radius: 6px;
+    padding: 12px 14px;
+  }
+  .feature-card h4 {
+    margin: 0 0 4px 0;
+    font-size: 11pt;
+    color: #0b141a;
+    font-weight: 600;
+  }
+  .feature-card p {
+    margin: 0;
+    font-size: 10pt;
+    color: #4a5764;
+    line-height: 1.45;
+  }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin: 16px 0 22px 0;
+  }
+  .stat {
+    background: white;
+    border: 1px solid #e3e6eb;
+    border-radius: 6px;
+    padding: 14px;
+    text-align: center;
+  }
+  .stat .value {
+    font-size: 18pt;
+    font-weight: 700;
+    color: #00a884;
+    line-height: 1.1;
+  }
+  .stat .label {
+    font-size: 9pt;
+    color: #5d6c7c;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-top: 4px;
+  }
+
+  .next-steps ol {
+    counter-reset: step;
+    list-style: none;
+    padding-left: 0;
+  }
+  .next-steps li {
+    counter-increment: step;
+    padding-left: 36px;
+    position: relative;
+    margin-bottom: 8px;
+  }
+  .next-steps li::before {
+    content: counter(step);
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 26px;
+    height: 26px;
+    background: #00a884;
+    color: white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 10pt;
+  }
+
+  strong { color: #0b141a; }
+  em { color: #2c3e50; }
+
+  .footer {
+    margin-top: 32px;
+    padding-top: 14px;
+    border-top: 1px solid #e3e6eb;
+    color: #8696a0;
+    font-size: 9pt;
+    text-align: center;
+  }
+
+  .page-break { page-break-before: always; }
+</style>
+</head>
+<body>
+<div class="doc">
+
+  <div class="header">
+    <div class="eyebrow">Build Update</div>
+    <h1>Dora</h1>
+    <div class="meta">
+      <span><strong>Date:</strong> May 2026</span>
+      <span><strong>Stage:</strong> Working MVP, deployed online</span>
+    </div>
+  </div>
+
+  <p class="lead">
+    Dora is an AI assistant that lives inside WhatsApp — the messaging app every Italian already uses.
+    Wellness professionals point Dora at a phone number, and from then on, their clients book, move,
+    and cancel lessons by chatting normally in Italian. No app to download, no website to learn.
+  </p>
+
+  <div class="try-box">
+    <h3>Try it yourself</h3>
+    <p style="margin-bottom: 8px;">The MVP is live. You can interact with it right now:</p>
+
+    <div class="link-row">
+      <span class="link-label">Chat as a client</span>
+      <a href="https://web-production-816f6.up.railway.app/console">https://web-production-816f6.up.railway.app/console</a>
+      <div class="hint">Try saying "ciao", then "vorrei prenotare giovedì alle 10", then "sì" to confirm. Click <strong>Demo</strong> to seed sample clients.</div>
+    </div>
+
+    <div class="link-row">
+      <span class="link-label">Practitioner panel (Silvia's view)</span>
+      <a href="https://web-production-816f6.up.railway.app/practitioner">https://web-production-816f6.up.railway.app/practitioner</a>
+      <div class="hint">PIN: <span class="pin">1234</span> — browse the agenda, click a client name for full chat history, or try the "Comandi" tab with "cancella tutto lunedì".</div>
+    </div>
+  </div>
+
+  <h2>What Dora is</h2>
+  <p>
+    For the professional, Dora replaces the messy mix of WhatsApp threads, paper agendas,
+    and "I'll get back to you tonight" that absorbs hours of unbillable work every week.
+    For the client, it's just texting a friendly assistant who happens to know the schedule.
+  </p>
+
+  <h2>What we've built so far</h2>
+
+  <h3>A working AI assistant in Italian</h3>
+  <p>
+    Dora understands free-form Italian messages — <em>"vorrei venire giovedì alle 10"</em>,
+    <em>"domani non riesco"</em>, <em>"spostami a venerdì alle 14"</em> — and turns them into real bookings.
+  </p>
+  <ul>
+    <li><strong>Booking</strong> new lessons, with confirmation before anything is locked in ("Ti prenoto per giovedì alle 10 — confermi?")</li>
+    <li><strong>Moving and cancelling</strong> existing lessons</li>
+    <li><strong>Answering questions</strong> like "quando è il mio prossimo appuntamento?" or "quante lezioni mi restano nel pacchetto?"</li>
+    <li><strong>Onboarding new clients</strong> by asking their name once, then letting them get to their actual request</li>
+  </ul>
+  <p>She speaks warmly, briefly, and consistently — no robotic language, no over-explaining.</p>
+
+  <h3>A panel for the practitioner</h3>
+  <p>Silvia logs in with a PIN and sees:</p>
+  <div class="feature-grid">
+    <div class="feature-card">
+      <h4>Weekly agenda</h4>
+      <p>One-click cancel, one-click view of any lesson</p>
+    </div>
+    <div class="feature-card">
+      <h4>Client list</h4>
+      <p>Click any name to see the full chat history with Dora</p>
+    </div>
+    <div class="feature-card">
+      <h4>Active packages</h4>
+      <p>Which clients have prepaid lessons, with low-balance flags</p>
+    </div>
+    <div class="feature-card">
+      <h4>Natural-language commands</h4>
+      <p>"Cancella tutto domani, sto male" → preview before any action</p>
+    </div>
+  </div>
+
+  <h3>Calendar sync</h3>
+  <p>
+    Dora's bookings sync automatically to a Google Calendar that Silvia already uses.
+    She doesn't have to learn another tool — her existing calendar shows everything.
+  </p>
+
+  <h3>Reminders</h3>
+  <p>
+    Each booking gets a WhatsApp reminder 24 hours before, so no-shows drop and clients don't forget.
+  </p>
+
+  <h3>A live testing platform</h3>
+  <p>
+    A public web console where anyone can chat with Dora as if they were a Pilates client and
+    watch the database update in real time. This is how we show prospective customers what Dora
+    can do — without committing to a real WhatsApp number first.
+  </p>
+
+  <h2>What this took technically (in plain language)</h2>
+
+  <ul>
+    <li><strong>AI cost-and-speed efficiency:</strong> most simple messages ("ciao", "domani alle 10", "quante lezioni ho?") are answered without calling the AI at all, using a deterministic rule layer. The AI is only invoked when the message is genuinely ambiguous. This makes Dora faster and dramatically cheaper to run at scale.</li>
+    <li><strong>Safety nets everywhere:</strong> bookings only confirm after the user says "sì". Bulk operations from Silvia's side ("cancella tutto domani") show a preview with the exact list of affected lessons before doing anything. Every conversation is logged for review.</li>
+    <li><strong>Built to scale to many practitioners:</strong> the data model and code are scoped per professional from day one. Onboarding a second customer is a configuration change, not a rewrite.</li>
+    <li><strong>No vendor lock-in:</strong> hosted on Railway, database on Supabase, calendars on Google — all interchangeable services with active competitors.</li>
+  </ul>
+
+  <h2>Where we are right now</h2>
+
+  <div class="stats">
+    <div class="stat">
+      <div class="value">€18-20</div>
+      <div class="label">Monthly cost per practitioner</div>
+    </div>
+    <div class="stat">
+      <div class="value">€30-60</div>
+      <div class="label">Target subscription price</div>
+    </div>
+    <div class="stat">
+      <div class="value">1 step</div>
+      <div class="label">From go-live (SIM card)</div>
+    </div>
+  </div>
+
+  <p>
+    <strong>Everything works end-to-end</strong> through the test console. We're one component away from go-live:
+    a dedicated SIM card and a 360dialog (WhatsApp Business) account, which is administrative paperwork
+    rather than engineering work. As soon as that's in place, Silvia's clients can start texting Dora directly.
+  </p>
+
+  <h2>What's next</h2>
+
+  <p>Once Silvia is live:</p>
+  <div class="next-steps">
+    <ol>
+      <li><strong>Validate with real conversations.</strong> Watch where Dora handles things gracefully and where she stumbles, refine accordingly.</li>
+      <li><strong>Expand to a second practitioner</strong> to confirm the multi-tenant story works.</li>
+      <li><strong>Self-service onboarding</strong> — a flow where any wellness professional can sign up, configure their hours, and have Dora running in 15 minutes.</li>
+      <li><strong>Premium features for retention:</strong> package renewals, no-show policies, waitlists, payment links.</li>
+    </ol>
+  </div>
+
+  <p style="margin-top: 18px;">
+    The hardest part — building an AI booking assistant that feels natural in Italian and doesn't
+    make embarrassing mistakes — is done. Everything from here is distribution and polish.
+  </p>
+
+  <div class="footer">
+    Dora MVP · giovannifoglietta@gmail.com · github.com/giovannifoglietta/dora-mvp
+  </div>
+
+</div>
+</body>
+</html>
